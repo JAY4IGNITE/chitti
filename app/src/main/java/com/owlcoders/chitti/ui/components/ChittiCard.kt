@@ -126,7 +126,27 @@ fun ChittiCard(event: CapturedEvent, onDelete: () -> Unit = {}, modifier: Modifi
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = ActionRed)
                     ) {
-                        Text("Add to Calendar")
+                        Text("Calendar")
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    OutlinedButton(
+                        onClick = {
+                            try {
+                                val intent = Intent(android.provider.AlarmClock.ACTION_SET_ALARM).apply {
+                                    putExtra(android.provider.AlarmClock.EXTRA_MESSAGE, event.extractedWhat)
+                                    putExtra(android.provider.AlarmClock.EXTRA_SKIP_UI, false)
+                                }
+                                context.startActivity(intent)
+                            } catch (e: Exception) {
+                                try {
+                                    context.startActivity(Intent(android.provider.AlarmClock.ACTION_SHOW_ALARMS))
+                                } catch (e2: Exception) {
+                                    // Ignored if device has no alarm app
+                                }
+                            }
+                        }
+                    ) {
+                        Text("Reminder")
                     }
                 }
 
