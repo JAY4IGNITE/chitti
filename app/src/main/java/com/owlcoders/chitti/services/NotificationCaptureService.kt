@@ -59,6 +59,8 @@ class NotificationCaptureService : NotificationListenerService() {
                     extractedWhat = extracted?.what,
                     extractedWhen = extracted?.whenTime,
                     extractedWho = extracted?.who,
+                    category = extracted?.category,
+                    urgency = extracted?.urgency,
                     status = if (extracted != null) "extracted" else "pending",
                     timestamp = System.currentTimeMillis()
                 )

@@ -11,6 +11,9 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
+import android.content.Intent
+import android.provider.CalendarContract
 import com.owlcoders.chitti.db.CapturedEvent
 import com.owlcoders.chitti.ui.theme.ActionRed
 import com.owlcoders.chitti.ui.theme.PaperWhite
@@ -19,6 +22,14 @@ import com.owlcoders.chitti.ui.theme.PaperWhite
 fun ChittiCard(event: CapturedEvent, modifier: Modifier = Modifier) {
     // Slight random rotation for the "sticky note" look
     val rotation = (event.id.hashCode() % 6) - 3f
+    val context = LocalContext.current
+
+    val containerColor = when {
+        event.urgency == "High" -> Color(0xFFFFEBEE)
+        event.category == "Work" -> Color(0xFFE3F2FD)
+        event.category == "Academic" -> Color(0xFFE8F5E9)
+        else -> Color(0xFFFFF9C4) // Classic Yellow Sticky Note
+    }
 
     Card(
         modifier = modifier
@@ -30,7 +41,7 @@ fun ChittiCard(event: CapturedEvent, modifier: Modifier = Modifier) {
                 spotColor = Color.Black.copy(alpha = 0.2f)
             ),
         shape = RoundedCornerShape(2.dp),
-        colors = CardDefaults.cardColors(containerColor = PaperWhite)
+        colors = CardDefaults.cardColors(containerColor = containerColor)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             if (event.status == "pending") {
@@ -57,12 +68,28 @@ fun ChittiCard(event: CapturedEvent, modifier: Modifier = Modifier) {
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End
                 ) {
-                    TextButton(onClick = { /* Dismiss */ }) {
-                        Text("Dismiss", color = Color.Gray)
+                    TextButton(
+                        onClick = {
+                            val launchIntent = context.packageManager.getLaunchIntentForPackage(event.sourceApp)
+                            if (launchIntent != null) {
+                                context.startActivity(launchIntent)
+                            }
+                        }
+                    ) {
+                        Text("Reply", color = Color.Gray)
                     }
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
-                        onClick = { /* Add to Calendar */ },
+                        onClick = {
+                            val intent = Intent(Intent.ACTION_INSERT).apply {
+                                data = CalendarContract.Events.CONTENT_URI
+                                putExtra(CalendarContract.Events.TITLE, event.extractedWhat)
+                                putExtra(CalendarContract.Events.DESCRIPTION, "Source: ${event.sourceApp}\nDetails: ${event.rawText}")
+                                // We'd ideally parse event.extractedWhen to milliseconds here, but for the MVP, Calendar handles natural text poorly without parsing.
+                                // We'll just pass the description so the user can set the time.
+                            }
+                            context.startActivity(intent)
+                        },
                         colors = ButtonDefaults.buttonColors(containerColor = ActionRed)
                     ) {
                         Text("Add to Calendar")

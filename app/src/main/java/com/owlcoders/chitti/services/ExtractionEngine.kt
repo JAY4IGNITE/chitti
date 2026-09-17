@@ -37,15 +37,15 @@ class ExtractionEngine(private val context: Context, modelPath: String = "/data/
             You must output ONLY valid JSON and nothing else. No markdown, no explanations.
             
             Schema:
-            { "what": "...", "when": "...", "who": "...", "confidence": 0.0-1.0 }
+            { "what": "...", "when": "...", "who": "...", "category": "Work|Personal|Academic", "urgency": "High|Medium|Low", "confidence": 0.0-1.0 }
             
             Example 1:
             Message: "Submit the hackathon deck by 10am tomorrow"
-            Output: { "what": "Submit hackathon deck", "when": "tomorrow 10am", "who": "me", "confidence": 0.95 }
+            Output: { "what": "Submit hackathon deck", "when": "tomorrow 10am", "who": "me", "category": "Academic", "urgency": "High", "confidence": 0.95 }
             
             Example 2 (Code-mixed):
             Message: "repu class unda? 9 ki?"
-            Output: { "what": "class", "when": "tomorrow 9:00", "who": "unknown", "confidence": 0.8 }
+            Output: { "what": "class", "when": "tomorrow 9:00", "who": "unknown", "category": "Academic", "urgency": "Medium", "confidence": 0.8 }
             
             Message: "$text"
             Output: 
@@ -68,6 +68,8 @@ class ExtractionEngine(private val context: Context, modelPath: String = "/data/
                 what = json.optString("what", ""),
                 whenTime = json.optString("when", ""),
                 who = json.optString("who", ""),
+                category = json.optString("category", "Personal"),
+                urgency = json.optString("urgency", "Medium"),
                 confidence = json.optDouble("confidence", 0.0)
             )
         } catch (e: Exception) {
@@ -81,5 +83,7 @@ data class ExtractedData(
     val what: String,
     val whenTime: String,
     val who: String,
+    val category: String,
+    val urgency: String,
     val confidence: Double
 )

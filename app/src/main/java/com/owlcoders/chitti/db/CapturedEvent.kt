@@ -11,6 +11,8 @@ data class CapturedEvent(
     val extractedWhat: String?,
     val extractedWhen: String?,
     val extractedWho: String?,
+    val category: String?,
+    val urgency: String?,
     val status: String,
     val timestamp: Long
 )
