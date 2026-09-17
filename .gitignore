@@ -1,0 +1,28 @@
+# Android Studio / Gradle
+*.iml
+.gradle
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+
+# Gradle wrapper
+!gradle/wrapper/gradle-wrapper.jar
+
+# Application specific
+app/build/
+gradle-8.5/
+*.apk
+*.ap_
+*.aab
+*.dex
+*.class
