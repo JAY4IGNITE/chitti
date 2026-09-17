@@ -6,6 +6,7 @@ import com.google.mediapipe.tasks.genai.llminference.LlmInference
 import org.json.JSONObject
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import com.owlcoders.chitti.db.CapturedEvent
 
 class ExtractionEngine(private val context: Context, modelPath: String = "/data/local/tmp/gemma.bin") {
 
@@ -35,6 +36,7 @@ class ExtractionEngine(private val context: Context, modelPath: String = "/data/
         val prompt = """
             You are a strict data extraction assistant. Your task is to extract commitments, deadlines, or meetings from the user's message.
             You must output ONLY valid JSON and nothing else. No markdown, no explanations.
+            If the message does NOT contain any task, commitment, meeting, or deadline, you MUST set "what" to "".
             
             Schema:
             { "what": "...", "when": "...", "who": "...", "category": "Work|Personal|Academic", "urgency": "High|Medium|Low", "confidence": 0.0-1.0 }
@@ -46,6 +48,10 @@ class ExtractionEngine(private val context: Context, modelPath: String = "/data/
             Example 2 (Code-mixed):
             Message: "repu class unda? 9 ki?"
             Output: { "what": "class", "when": "tomorrow 9:00", "who": "unknown", "category": "Academic", "urgency": "Medium", "confidence": 0.8 }
+            
+            Example 3 (Not a task):
+            Message: "hi how are you"
+            Output: { "what": "", "when": "", "who": "", "category": "Personal", "urgency": "Low", "confidence": 0.0 }
             
             Message: "$text"
             Output: 
@@ -75,6 +81,57 @@ class ExtractionEngine(private val context: Context, modelPath: String = "/data/
         } catch (e: Exception) {
             Log.e("ChittiExtraction", "Extraction failed: ${e.message}")
             return null
+        }
+    }
+
+    suspend fun generateSmartReply(event: CapturedEvent): String {
+        val llm = llmInference ?: return "Sure, I'll take care of it."
+        
+        val prompt = """
+            You are a smart reply assistant. The user received a message containing a task.
+            Draft a short, natural, and polite reply confirming that the user will do the task.
+            Only output the reply text, no quotes or explanation.
+            
+            Task: ${event.extractedWhat}
+            Time: ${event.extractedWhen}
+            Reply:
+        """.trimIndent()
+        
+        return try {
+            mutex.withLock {
+                llm.generateResponse(prompt).trim()
+            }
+        } catch (e: Exception) {
+            "Got it!"
+        }
+    }
+
+    suspend fun generateRagResponse(query: String, contextEvents: List<CapturedEvent>): String {
+        val llm = llmInference ?: return "I am unable to answer right now because the AI model is not loaded."
+        
+        val contextString = contextEvents.joinToString("\n") { 
+            "- ${it.extractedWhat} (Due: ${it.extractedWhen}, Category: ${it.category})" 
+        }
+        
+        val prompt = """
+            You are Chitti, a helpful personal assistant memory bot.
+            Answer the user's question based ONLY on the provided context of their tasks. 
+            If the answer is not in the context, say "I don't have that in my memory."
+            Keep it conversational but concise.
+            
+            Context (User's Tasks):
+            $contextString
+            
+            Question: $query
+            Answer:
+        """.trimIndent()
+        
+        return try {
+            mutex.withLock {
+                llm.generateResponse(prompt).trim()
+            }
+        } catch (e: Exception) {
+            "Sorry, I ran into an error while thinking."
         }
     }
 }

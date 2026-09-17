@@ -10,6 +10,9 @@ import kotlinx.coroutines.launch
 class ChittiApp : Application() {
     val database by lazy { AppDatabase.getDatabase(this) }
     
+    // In-memory cache for deep-linking directly back to the exact notification intent
+    val replyIntents = mutableMapOf<Int, android.app.PendingIntent>()
+    
     // Pre-warm the LLM to avoid cold-start delays during demo
     var extractionEngine: ExtractionEngine? = null
         private set

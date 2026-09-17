@@ -4,6 +4,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
@@ -14,12 +16,21 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
 import android.content.Intent
 import android.provider.CalendarContract
+import androidx.compose.animation.*
+import androidx.compose.animation.core.tween
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import com.owlcoders.chitti.ChittiApp
 import com.owlcoders.chitti.db.CapturedEvent
 import com.owlcoders.chitti.ui.theme.ActionRed
 import com.owlcoders.chitti.ui.theme.PaperWhite
+import kotlinx.coroutines.launch
 
 @Composable
-fun ChittiCard(event: CapturedEvent, modifier: Modifier = Modifier) {
+fun ChittiCard(event: CapturedEvent, onDelete: () -> Unit = {}, modifier: Modifier = Modifier) {
+    var generatedReply by remember { mutableStateOf<String?>(null) }
+    var isGeneratingReply by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
     // Slight random rotation for the "sticky note" look
     val rotation = (event.id.hashCode() % 6) - 3f
     val context = LocalContext.current
@@ -31,20 +42,42 @@ fun ChittiCard(event: CapturedEvent, modifier: Modifier = Modifier) {
         else -> Color(0xFFFFF9C4) // Classic Yellow Sticky Note
     }
 
-    Card(
-        modifier = modifier
-            .padding(8.dp)
-            .rotate(rotation)
-            .shadow(
-                elevation = 6.dp,
-                shape = RoundedCornerShape(2.dp),
-                spotColor = Color.Black.copy(alpha = 0.2f)
-            ),
-        shape = RoundedCornerShape(2.dp),
-        colors = CardDefaults.cardColors(containerColor = containerColor)
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            if (event.status == "pending") {
+
+        Card(
+            modifier = modifier
+                .padding(8.dp)
+                .rotate(rotation)
+                .shadow(
+                    elevation = 6.dp,
+                    shape = RoundedCornerShape(2.dp),
+                    spotColor = Color.Black.copy(alpha = 0.2f)
+                ),
+            shape = RoundedCornerShape(2.dp),
+            colors = CardDefaults.cardColors(containerColor = containerColor)
+        ) {
+            Box {
+                // The Push Pin
+                Text(
+                    text = "📍",
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .offset(y = (-10).dp),
+                    style = MaterialTheme.typography.headlineMedium
+                )
+                
+                IconButton(
+                    onClick = onDelete,
+                    modifier = Modifier.align(Alignment.TopEnd).padding(4.dp)
+                ) {
+                    Icon(
+                        imageVector = androidx.compose.material.icons.Icons.Default.Close,
+                        contentDescription = "Delete Task",
+                        tint = Color.Gray
+                    )
+                }
+                
+                Column(modifier = Modifier.padding(16.dp).padding(top = 8.dp)) {
+                    if (event.status == "pending") {
                 Text(
                     text = "Thinking...",
                     style = MaterialTheme.typography.titleLarge,
@@ -70,13 +103,16 @@ fun ChittiCard(event: CapturedEvent, modifier: Modifier = Modifier) {
                 ) {
                     TextButton(
                         onClick = {
-                            val launchIntent = context.packageManager.getLaunchIntentForPackage(event.sourceApp)
-                            if (launchIntent != null) {
-                                context.startActivity(launchIntent)
+                            isGeneratingReply = true
+                            scope.launch {
+                                val engine = (context.applicationContext as ChittiApp).extractionEngine
+                                generatedReply = engine?.generateSmartReply(event) ?: "Sure, I'll take care of it."
+                                isGeneratingReply = false
                             }
-                        }
+                        },
+                        enabled = !isGeneratingReply
                     ) {
-                        Text("Reply", color = Color.Gray)
+                        Text(if (isGeneratingReply) "Thinking..." else "✨ Smart Reply", color = Color(0xFF673AB7), fontWeight = FontWeight.Bold)
                     }
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
@@ -85,8 +121,6 @@ fun ChittiCard(event: CapturedEvent, modifier: Modifier = Modifier) {
                                 data = CalendarContract.Events.CONTENT_URI
                                 putExtra(CalendarContract.Events.TITLE, event.extractedWhat)
                                 putExtra(CalendarContract.Events.DESCRIPTION, "Source: ${event.sourceApp}\nDetails: ${event.rawText}")
-                                // We'd ideally parse event.extractedWhen to milliseconds here, but for the MVP, Calendar handles natural text poorly without parsing.
-                                // We'll just pass the description so the user can set the time.
                             }
                             context.startActivity(intent)
                         },
@@ -94,6 +128,29 @@ fun ChittiCard(event: CapturedEvent, modifier: Modifier = Modifier) {
                     ) {
                         Text("Add to Calendar")
                     }
+                }
+
+                if (generatedReply != null) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Box(modifier = Modifier.fillMaxWidth().background(Color.White.copy(alpha = 0.5f), RoundedCornerShape(8.dp)).padding(12.dp)) {
+                        Column {
+                            Text("Drafted Reply:", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                            Text(generatedReply!!, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                                TextButton(onClick = {
+                                    val sendIntent = Intent().apply {
+                                        action = Intent.ACTION_SEND
+                                        putExtra(Intent.EXTRA_TEXT, generatedReply)
+                                        type = "text/plain"
+                                    }
+                                    context.startActivity(Intent.createChooser(sendIntent, "Send Smart Reply"))
+                                }) {
+                                    Text("Send")
+                                }
+                            }
+                        }
+                    }
+                }
                 }
             }
         }

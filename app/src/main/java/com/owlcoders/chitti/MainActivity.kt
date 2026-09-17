@@ -19,11 +19,33 @@ import com.owlcoders.chitti.ui.screens.TodayScreen
 import com.owlcoders.chitti.db.CapturedEvent
 import kotlinx.coroutines.launch
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.animation.Crossfade
+import com.owlcoders.chitti.ui.screens.DashboardScreen
+import com.owlcoders.chitti.ui.screens.SettingsScreen
+import com.owlcoders.chitti.ui.screens.ChatBotScreen
 import androidx.compose.runtime.*
 import android.util.Log
+import android.graphics.Bitmap
 import android.content.ComponentName
 import androidx.core.app.NotificationManagerCompat
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+
+sealed class Screen(val route: String, val icon: androidx.compose.ui.graphics.vector.ImageVector, val label: String) {
+    object Home : Screen("home", Icons.Filled.Home, "Desk")
+    object Chat : Screen("chat", Icons.Filled.Person, "Chat")
+    object Dashboard : Screen("dashboard", Icons.Filled.List, "Dashboard")
+    object Settings : Screen("settings", Icons.Filled.Settings, "Settings")
+}
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -34,24 +56,76 @@ class MainActivity : ComponentActivity() {
         setContent {
             ChittiTheme {
                 // Collect real data from Room
-                val events by (application as ChittiApp).database.eventDao().getAllEvents().collectAsState(initial = emptyList())
+                var searchQuery by remember { mutableStateOf("") }
+                
+                val events by if (searchQuery.isEmpty()) {
+                    (application as ChittiApp).database.eventDao().getAllEvents().collectAsState(initial = emptyList())
+                } else {
+                    (application as ChittiApp).database.eventDao().searchEvents(searchQuery).collectAsState(initial = emptyList())
+                }
+                
                 val scope = rememberCoroutineScope()
                 var hasNotificationAccess by remember { mutableStateOf(isNotificationServiceEnabled()) }
                 
-                Scaffold(
-                    floatingActionButton = {
-                        FloatingActionButton(
-                            onClick = {
-                                // DEMO REPLAY: Inject fake notification into LLM directly
+                val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicturePreview()) { bitmap: Bitmap? ->
+                    if (bitmap != null) {
+                        Log.d("ChittiVision", "Captured image. Running OCR...")
+                        val image = InputImage.fromBitmap(bitmap, 0)
+                        val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+                        recognizer.process(image)
+                            .addOnSuccessListener { visionText ->
+                                Log.d("ChittiVision", "OCR Text: ${visionText.text}")
                                 scope.launch {
                                     val engine = (application as ChittiApp).extractionEngine
-                                    Log.d("ChittiDemo", "Replay triggered. Running LLM...")
-                                    val extracted = engine?.extract("repu class unda? 9 ki?")
-                                    Log.d("ChittiDemo", "Extracted: ${extracted?.what} at ${extracted?.whenTime}")
+                                    val extracted = engine?.extract("OCR FROM FLYER: ${visionText.text}")
+                                    Log.d("ChittiVision", "Extracted task from flyer!")
+                                    // Save it to DB
+                                    (application as ChittiApp).database.eventDao().insertEvent(
+                                        CapturedEvent(
+                                            sourceApp = "com.owlcoders.chitti.vision",
+                                            rawText = "Flyer text: ${visionText.text.take(50)}...",
+                                            extractedWhat = extracted?.what,
+                                            extractedWhen = extracted?.whenTime,
+                                            extractedWho = extracted?.who,
+                                            category = extracted?.category,
+                                            urgency = extracted?.urgency,
+                                            status = "extracted",
+                                            timestamp = System.currentTimeMillis()
+                                        )
+                                    )
                                 }
                             }
+                            .addOnFailureListener { e ->
+                                Log.e("ChittiVision", "OCR Failed", e)
+                            }
+                    }
+                }
+                
+                var currentScreen by remember { mutableStateOf<Screen>(Screen.Home) }
+                
+                Scaffold(
+                    bottomBar = {
+                        NavigationBar(
+                            containerColor = androidx.compose.ui.graphics.Color.White
                         ) {
-                            Icon(Icons.Filled.PlayArrow, contentDescription = "Debug Replay")
+                            val screens = listOf(Screen.Home, Screen.Chat, Screen.Dashboard, Screen.Settings)
+                            screens.forEach { screen ->
+                                NavigationBarItem(
+                                    icon = { Icon(screen.icon, contentDescription = screen.label) },
+                                    label = { Text(screen.label) },
+                                    selected = currentScreen == screen,
+                                    onClick = { currentScreen = screen }
+                                )
+                            }
+                        }
+                    },
+                    floatingActionButton = {
+                        if (currentScreen == Screen.Home) {
+                            FloatingActionButton(
+                                onClick = { cameraLauncher.launch(null) }
+                            ) {
+                                Icon(Icons.Filled.Add, contentDescription = "Scan Flyer")
+                            }
                         }
                     }
                 ) { innerPadding ->
@@ -60,7 +134,46 @@ class MainActivity : ComponentActivity() {
                         color = MaterialTheme.colorScheme.background
                     ) {
                         if (hasNotificationAccess) {
-                            TodayScreen(events = events)
+                            Crossfade(targetState = currentScreen) { screen ->
+                                when (screen) {
+                                    Screen.Home -> {
+                                        Column(modifier = Modifier.fillMaxSize()) {
+                                            OutlinedTextField(
+                                                value = searchQuery,
+                                                onValueChange = { searchQuery = it },
+                                                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                                placeholder = { Text("Search Contextual Memory...") },
+                                                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = "Search") },
+                                                colors = OutlinedTextFieldDefaults.colors(
+                                                    focusedContainerColor = androidx.compose.ui.graphics.Color.White,
+                                                    unfocusedContainerColor = androidx.compose.ui.graphics.Color.White
+                                                )
+                                            )
+                                            TodayScreen(events = events, onDeleteEvent = { event ->
+                                                scope.launch {
+                                                    (application as ChittiApp).database.eventDao().deleteEvent(event)
+                                                }
+                                            })
+                                        }
+                                    }
+                                    Screen.Chat -> {
+                                        ChatBotScreen(events = events)
+                                    }
+                                    Screen.Dashboard -> {
+                                        DashboardScreen(events = events)
+                                    }
+                                    Screen.Settings -> {
+                                        SettingsScreen(
+                                            hasNotificationAccess = hasNotificationAccess,
+                                            onWipeData = {
+                                                scope.launch {
+                                                    (application as ChittiApp).database.eventDao().deleteAllEvents()
+                                                }
+                                            }
+                                        )
+                                    }
+                                }
+                            }
                         } else {
                             Column(
                                 modifier = Modifier.fillMaxSize(),

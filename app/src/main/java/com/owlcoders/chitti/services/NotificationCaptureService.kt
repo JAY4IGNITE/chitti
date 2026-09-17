@@ -23,6 +23,16 @@ class NotificationCaptureService : NotificationListenerService() {
         sbn?.let {
             val packageName = it.packageName
             val notification = it.notification
+            
+            // IGNORE ONGOING AND SYSTEM NOTIFICATIONS
+            if ((notification.flags and Notification.FLAG_ONGOING_EVENT) != 0 || 
+                (notification.flags and Notification.FLAG_GROUP_SUMMARY) != 0) {
+                return
+            }
+            if (packageName == "android" || packageName.startsWith("com.android.")) {
+                return
+            }
+
             val extras = notification.extras
             val title = extras.getString(Notification.EXTRA_TITLE)
             val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()
@@ -34,12 +44,18 @@ class NotificationCaptureService : NotificationListenerService() {
                     serviceScope.launch {
                         val engine = (application as ChittiApp).extractionEngine
                         val extracted = engine?.extract(text)
+                        
+                        // ONLY SAVE IF IT'S ACTUALLY A TASK OR LLM IS UNAVAILABLE
                         if (extracted != null) {
-                            Log.d("ChittiCapture", "Extracted: ${extracted.what} at ${extracted.whenTime}")
-                            saveToDatabase(packageName, text, extracted)
-                        } else {
-                            // Fallback if model fails or isn't loaded
-                            saveToDatabase(packageName, text, null)
+                            if (extracted.what.isNotBlank()) {
+                                Log.d("ChittiCapture", "Extracted: ${extracted.what} at ${extracted.whenTime}")
+                                saveToDatabase(packageName, text, extracted, notification.contentIntent)
+                            } else {
+                                Log.d("ChittiCapture", "LLM determined this is not a task. Skipping.")
+                            }
+                        } else if (engine == null) {
+                            // Fallback ONLY if model isn't loaded yet (so the demo still works initially)
+                            saveToDatabase(packageName, text, null, notification.contentIntent)
                         }
                     }
                 } else {
@@ -49,10 +65,10 @@ class NotificationCaptureService : NotificationListenerService() {
         }
     }
     
-    private fun saveToDatabase(sourceApp: String, rawText: String, extracted: ExtractedData?) {
+    private fun saveToDatabase(sourceApp: String, rawText: String, extracted: ExtractedData?, contentIntent: android.app.PendingIntent?) {
         val app = application as ChittiApp
         serviceScope.launch {
-            app.database.eventDao().insertEvent(
+            val id = app.database.eventDao().insertEvent(
                 CapturedEvent(
                     sourceApp = sourceApp,
                     rawText = rawText,
@@ -65,7 +81,10 @@ class NotificationCaptureService : NotificationListenerService() {
                     timestamp = System.currentTimeMillis()
                 )
             )
-            Log.d("ChittiCapture", "Saved to DB")
+            if (contentIntent != null) {
+                app.replyIntents[id.toInt()] = contentIntent
+            }
+            Log.d("ChittiCapture", "Saved to DB with ID: $id")
         }
     }
 
