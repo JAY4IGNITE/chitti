@@ -41,7 +41,7 @@ Chitti operates on a two-track architecture designed for absolute minimum batter
 
 ### 1. Download the Gemma Model
 Because the Gemma LLM weights are too large for GitHub, you must download them manually.
-1. Download `gemma-1.1-2b-it-cpu-int4.bin` from Kaggle/Google.
+1. Download `gemma-1.1-2b-it-cpu-int4.bin` from Kaggle: [Google Gemma MediaPipe Models](https://www.kaggle.com/models/google/gemma/tfLite/gemma-1.1-2b-it-cpu-int4).
 2. Connect your device via USB with USB Debugging enabled.
 3. Push the model directly to the device's local tmp folder:
    ```bash
