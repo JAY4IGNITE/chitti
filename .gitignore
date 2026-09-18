@@ -73,3 +73,6 @@ package-lock.json
 
 # MCP files
 .mcp.json
+
+# Tool outputs
+brag-output/
