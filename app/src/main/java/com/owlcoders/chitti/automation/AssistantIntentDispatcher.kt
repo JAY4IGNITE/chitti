@@ -50,11 +50,101 @@ class AssistantIntentDispatcher(
     ): AssistantResponse = withContext(Dispatchers.IO) {
         val trimmed = query.trim()
         val lower = trimmed.lowercase()
-        Log.d(tag, "Processing query: '$trimmed'")
+            .replace(Regex("^(chitti|hey chitti|ok chitti|please|can you|could you)\\s*"), "")
+            .trim()
+        Log.d(tag, "Processing query: '$trimmed' (cleaned: '$lower')")
 
-        // 1. App Launching Intent: "open whatsapp", "launch youtube", "open camera", "open ..."
+        // 1. Identity & Introduction
+        if (lower.contains("who are you") || lower.contains("what is your name") || lower.contains("who made you")) {
+            val reply = "I am Chitti, your on-device mobile AI assistant. I can open apps like WhatsApp and YouTube, find documents from today or long ago, manage your agenda, and assist with your daily tasks completely privately on your device."
+            if (shouldSpeak) ttsEngine.speak(reply)
+            return@withContext AssistantResponse(
+                message = reply,
+                spokenText = reply,
+                actionType = ActionCategory.CONVERSATION,
+                actionSuccess = true,
+                actionLabel = "About Chitti"
+            )
+        }
+
+        // 2. Greetings & Politeness
+        if (lower.matches(Regex("^(hi|hello|hey|yo|namaste|good morning|good evening|good afternoon|good night)\\b.*"))) {
+            val reply = "Hello! I'm Chitti. What can I do for you right now? You can say \"Open WhatsApp\", \"Open YouTube\", \"Find old files\", or ask about your schedule."
+            if (shouldSpeak) ttsEngine.speak(reply)
+            return@withContext AssistantResponse(
+                message = reply,
+                spokenText = reply,
+                actionType = ActionCategory.CONVERSATION,
+                actionSuccess = true,
+                actionLabel = "Greeting"
+            )
+        }
+
+        if (lower.contains("how are you")) {
+            val reply = "I'm doing great and running fast on your device! Ready to help you with apps, files, or tasks."
+            if (shouldSpeak) ttsEngine.speak(reply)
+            return@withContext AssistantResponse(
+                message = reply,
+                spokenText = reply,
+                actionType = ActionCategory.CONVERSATION,
+                actionSuccess = true,
+                actionLabel = "Status"
+            )
+        }
+
+        // 3. Capabilities / Help
+        if (lower.contains("what can you do") || lower.contains("help") || lower == "features") {
+            val reply = "Here is what I can do for you:\n• Launch Apps: \"Open WhatsApp\", \"Open YouTube\", \"Open Camera\"\n• Find Files: \"Find files from long ago\", \"Search documents\"\n• Device Control: \"Turn on flashlight\", \"Turn off torch\"\n• Agenda & Tasks: \"What's pending today?\", \"My schedule\"\n• Local AI Q&A and instant voice responses."
+            val spoken = "I can open apps like WhatsApp and YouTube, find documents from today or long ago, control your flashlight, and manage your daily tasks."
+            if (shouldSpeak) ttsEngine.speak(spoken)
+            return@withContext AssistantResponse(
+                message = reply,
+                spokenText = spoken,
+                actionType = ActionCategory.CONVERSATION,
+                actionSuccess = true,
+                actionLabel = "Capabilities"
+            )
+        }
+
+        // 4. Current Time & Date
+        if (lower.contains("what time") || lower.contains("current time") || lower.contains("what is the time") ||
+            lower.contains("today's date") || lower.contains("what day is it") || lower.contains("what date is it")) {
+            val now = java.util.Date()
+            val timeFormat = java.text.SimpleDateFormat("h:mm a", java.util.Locale.getDefault())
+            val dateFormat = java.text.SimpleDateFormat("EEEE, MMMM d, yyyy", java.util.Locale.getDefault())
+            val reply = "It's ${timeFormat.format(now)} on ${dateFormat.format(now)}."
+            if (shouldSpeak) ttsEngine.speak(reply)
+            return@withContext AssistantResponse(
+                message = reply,
+                spokenText = reply,
+                actionType = ActionCategory.CONVERSATION,
+                actionSuccess = true,
+                actionLabel = "Clock"
+            )
+        }
+
+        // 5. Jokes
+        if (lower.contains("tell me a joke") || lower.contains("joke")) {
+            val jokes = listOf(
+                "Why do programmers prefer dark mode? Because light attracts bugs! 😄",
+                "Why did the smartphone go to school? To become a smart phone! 📱",
+                "There are 10 types of people in the world: those who understand binary, and those who don't. 🤖",
+                "Why did the developer go broke? Because they used up all their cache! 💰"
+            )
+            val joke = jokes.random()
+            if (shouldSpeak) ttsEngine.speak(joke)
+            return@withContext AssistantResponse(
+                message = joke,
+                spokenText = joke,
+                actionType = ActionCategory.CONVERSATION,
+                actionSuccess = true,
+                actionLabel = "Humor"
+            )
+        }
+
+        // 6. App Launching Intent: "open whatsapp", "launch youtube", "open camera", "open ..."
         if (lower.startsWith("open ") || lower.startsWith("launch ") || lower.startsWith("start ") || lower.startsWith("go to ")) {
-            val appResult = appLauncher.launch(trimmed)
+            val appResult = appLauncher.launch(lower)
             val speech = if (appResult.success) appResult.message else "I couldn't find that app on your phone."
             if (shouldSpeak) {
                 ttsEngine.speak(speech)
@@ -68,9 +158,10 @@ class AssistantIntentDispatcher(
             )
         }
 
-        // 2. Flashlight / Torch Intent: "turn on flashlight", "toggle flashlight", "torch on"
+        // 7. Flashlight / Torch Intent: "turn on flashlight", "toggle flashlight", "torch on"
         if (lower.contains("flashlight") || lower.contains("torch")) {
-            val isTurnOn = lower.contains("on") || !flashlightOn
+            val isTurnOff = lower.contains("off") || lower.contains("stop") || lower.contains("disable")
+            val isTurnOn = lower.contains("on") || lower.contains("enable") || !isTurnOff
             val resultMsg = toggleFlashlight(isTurnOn)
             if (shouldSpeak) {
                 ttsEngine.speak(resultMsg)
@@ -84,7 +175,7 @@ class AssistantIntentDispatcher(
             )
         }
 
-        // 3. File Finder Intent: "find file ...", "search files for ...", "find long ago documents", "find old files"
+        // 8. File Finder Intent: "find file ...", "search files for ...", "find long ago documents", "find old files"
         if (lower.startsWith("find file") || lower.startsWith("search file") ||
             lower.startsWith("find document") || lower.startsWith("search document") ||
             lower.startsWith("find doc") || lower.startsWith("search doc") ||
@@ -126,7 +217,7 @@ class AssistantIntentDispatcher(
             )
         }
 
-        // 4. Task & Agenda Queries: "what's pending today?", "what are my tasks?", "what do I have scheduled?"
+        // 9. Task & Agenda Queries: "what's pending today?", "what are my tasks?", "what do I have scheduled?"
         if (lower.contains("what's pending") || lower.contains("my tasks") || lower.contains("schedule today") ||
             lower.contains("what do i have") || lower.contains("agenda") || lower.contains("commitments")) {
 
@@ -153,21 +244,27 @@ class AssistantIntentDispatcher(
             )
         }
 
-        // 5. General AI Q&A via ExtractionEngine / Gemma RAG
+        // 10. General Assistant AI Q&A via ExtractionEngine / Gemma RAG
         val app = context.applicationContext as? ChittiApp
         val extractionEngine = app?.extractionEngine
-        val aiResponse = extractionEngine?.generateRagResponse(trimmed, events)
-            ?: "I'm Chitti, your on-device AI assistant. You can ask me to open apps like WhatsApp or YouTube, find any recent or long-ago files, manage your tasks, or control your device."
+        val ragResult = extractionEngine?.generateRagResponse(trimmed, events)
+
+        val finalResponse = if (ragResult != null && !ragResult.contains("I don't have that in my memory")) {
+            ragResult
+        } else {
+            "I'm Chitti, your on-device AI assistant. You can ask me to open apps like WhatsApp or YouTube, find documents and files from today or long ago, manage your agenda, or toggle your flashlight."
+        }
 
         if (shouldSpeak) {
-            ttsEngine.speak(aiResponse)
+            ttsEngine.speak(finalResponse)
         }
 
         AssistantResponse(
-            message = aiResponse,
-            spokenText = aiResponse,
+            message = finalResponse,
+            spokenText = finalResponse,
             actionType = ActionCategory.CONVERSATION,
-            actionSuccess = true
+            actionSuccess = true,
+            actionLabel = "Assistant"
         )
     }
 
