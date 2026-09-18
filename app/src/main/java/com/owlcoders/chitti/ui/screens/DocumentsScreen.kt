@@ -1,7 +1,10 @@
 package com.owlcoders.chitti.ui.screens
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.net.Uri
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -21,10 +24,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import com.owlcoders.chitti.db.entities.Document
 import com.owlcoders.chitti.ui.theme.*
 import java.text.SimpleDateFormat
@@ -38,8 +43,9 @@ fun DocumentsScreen(
     onOpenDocument: (Document) -> Unit = {},
     onDeleteDocument: (Document) -> Unit = {}
 ) {
-    val dateFormat = remember { SimpleDateFormat("MMM dd, yyyy", Locale.getDefault()) }
+    val context = LocalContext.current
     var searchQuery by remember { mutableStateOf("") }
+    val dateFormat = remember { SimpleDateFormat("MMM dd, yyyy", Locale.getDefault()) }
 
     // SAF Document Picker launcher
     val filePickerLauncher = rememberLauncherForActivityResult(
@@ -56,6 +62,18 @@ fun DocumentsScreen(
     ) { bitmap: Bitmap? ->
         if (bitmap != null) {
             onScanBitmap(bitmap)
+        }
+    }
+
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            try {
+                cameraScanLauncher.launch(null)
+            } catch (e: Exception) {
+                Log.e("DocumentsScreen", "Error launching camera: ${e.message}")
+            }
         }
     }
 
@@ -171,7 +189,18 @@ fun DocumentsScreen(
             }
 
             OutlinedButton(
-                onClick = { cameraScanLauncher.launch(null) },
+                onClick = {
+                    val hasPerm = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+                    if (hasPerm) {
+                        try {
+                            cameraScanLauncher.launch(null)
+                        } catch (e: Exception) {
+                            Log.e("DocumentsScreen", "Failed to launch camera: ${e.message}")
+                        }
+                    } else {
+                        cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                    }
+                },
                 modifier = Modifier.weight(1f),
                 shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = GeminiCyan),

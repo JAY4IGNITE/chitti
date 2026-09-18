@@ -1,7 +1,10 @@
 package com.owlcoders.chitti.ui.screens
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.net.Uri
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
@@ -24,14 +27,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import com.owlcoders.chitti.automation.DeviceFile
 import com.owlcoders.chitti.automation.FileCategory
 import com.owlcoders.chitti.automation.FileFinder
 import com.owlcoders.chitti.automation.TimeFilter
+import com.owlcoders.chitti.ui.components.GeminiCircularProgressIndicator
 import com.owlcoders.chitti.ui.theme.*
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -86,6 +92,19 @@ fun FilesScreen(
             onScanBitmap(bitmap)
             scope.launch {
                 filesList = fileFinder.queryFiles(searchQuery, selectedTimeFilter, selectedCategory)
+            }
+        }
+    }
+
+    val context = LocalContext.current
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            try {
+                cameraScanLauncher.launch(null)
+            } catch (e: Exception) {
+                Log.e("FilesScreen", "Failed to launch camera after grant: ${e.message}")
             }
         }
     }
@@ -269,7 +288,18 @@ fun FilesScreen(
             }
 
             OutlinedButton(
-                onClick = { cameraScanLauncher.launch(null) },
+                onClick = {
+                    val hasPerm = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+                    if (hasPerm) {
+                        try {
+                            cameraScanLauncher.launch(null)
+                        } catch (e: Exception) {
+                            Log.e("FilesScreen", "Failed to launch camera: ${e.message}")
+                        }
+                    } else {
+                        cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                    }
+                },
                 modifier = Modifier.weight(1f),
                 shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = GeminiCyan),
@@ -286,7 +316,7 @@ fun FilesScreen(
         // Files List
         if (isLoading) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = GeminiCyan, strokeWidth = 3.dp)
+                GeminiCircularProgressIndicator(modifier = Modifier.size(36.dp))
             }
         } else if (filesList.isEmpty()) {
             Box(

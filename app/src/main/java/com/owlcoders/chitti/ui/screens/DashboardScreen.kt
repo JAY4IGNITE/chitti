@@ -330,7 +330,7 @@ fun CategoryStat(name: String, count: Int, total: Int, color: Color) {
     ) {
         Text(text = name, modifier = Modifier.weight(1f), fontWeight = FontWeight.Medium)
         LinearProgressIndicator(
-            progress = percentage,
+            progress = { percentage },
             modifier = Modifier
                 .weight(2f)
                 .height(8.dp),

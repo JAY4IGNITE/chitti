@@ -165,10 +165,8 @@ fun GeminiVoiceOverlay(
                         }
                         state == VoiceAssistantState.THINKING -> {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(22.dp),
-                                    color = GeminiCyan,
-                                    strokeWidth = 2.5.dp
+                                GeminiCircularProgressIndicator(
+                                    modifier = Modifier.size(24.dp)
                                 )
                                 Spacer(modifier = Modifier.width(12.dp))
                                 Text(
@@ -268,15 +266,15 @@ fun GeminiVoiceOverlay(
                 Spacer(modifier = Modifier.height(20.dp))
 
                 // Dynamic Animated Waveform & Glowing Mic Orb
-                Box(
+                Column(
                     modifier = Modifier.fillMaxWidth(),
-                    contentAlignment = Alignment.Center
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     if (state == VoiceAssistantState.LISTENING) {
                         AudioWaveformVisualizer(rmsLevel = rmsLevel)
-                    } else {
-                        GeminiPulsingOrb(state = state, onClick = onMicClick)
+                        Spacer(modifier = Modifier.height(14.dp))
                     }
+                    GeminiPulsingOrb(state = state, onClick = onMicClick)
                 }
 
                 Spacer(modifier = Modifier.height(18.dp))

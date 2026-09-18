@@ -9,6 +9,7 @@ import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.util.Log
+import java.util.Locale
 
 /**
  * High-performance Speech-to-Text Manager with low-latency silence detection
@@ -119,36 +120,57 @@ class SpeechToTextManager(
         override fun onEvent(eventType: Int, params: Bundle?) {}
     }
 
+    private fun cleanupRecognizer() {
+        try {
+            speechRecognizer?.let { recognizer ->
+                recognizer.stopListening()
+                recognizer.cancel()
+                recognizer.destroy()
+            }
+        } catch (e: Exception) {
+            Log.w(tag, "Error cleaning up recognizer: ${e.message}")
+        } finally {
+            speechRecognizer = null
+            isListening = false
+        }
+    }
+
     fun startListening() {
-        mainHandler.post {
+        runOnMain {
             try {
                 if (!SpeechRecognizer.isRecognitionAvailable(context)) {
-                    onError("Speech recognition is not available on this device.")
-                    return@post
+                    val msg = "Speech recognition is not available on this device."
+                    Log.w(tag, msg)
+                    onError(msg)
+                    return@runOnMain
                 }
 
-                stopListening()
+                cleanupRecognizer()
                 hasTriggeredFinal = false
 
-                speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context).apply {
+                val recognizer = SpeechRecognizer.createSpeechRecognizer(context).apply {
                     setRecognitionListener(recognitionListener)
                 }
+                speechRecognizer = recognizer
+
+                val currentLocale = Locale.getDefault()
+                val langTag = if (currentLocale.language.isNotBlank()) currentLocale.toLanguageTag() else "en-US"
 
                 val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                     putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-                    putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+                    putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
                     putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.packageName)
-                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US")
-                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "en-US")
-                    // Note: Google Speech Engine requires Integer values, not Long!
-                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1800)
-                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1200)
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, langTag)
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, langTag)
+                    // Note: Integer values required by Android speech recognition service
+                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2000)
+                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1500)
                     putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1000)
                 }
 
-                speechRecognizer?.startListening(intent)
-                Log.d(tag, "Started fast-response speech listening")
+                recognizer.startListening(intent)
+                Log.d(tag, "Speech recognition successfully started with locale $langTag")
             } catch (e: Exception) {
                 Log.e(tag, "Failed to start listening: ${e.message}", e)
                 onError("Failed to start microphone: ${e.message}")
@@ -157,23 +179,21 @@ class SpeechToTextManager(
     }
 
     fun stopListening() {
-        mainHandler.post {
-            try {
-                if (speechRecognizer != null) {
-                    speechRecognizer?.stopListening()
-                    speechRecognizer?.cancel()
-                    speechRecognizer?.destroy()
-                    speechRecognizer = null
-                    isListening = false
-                    Log.d(tag, "Stopped speech listening")
-                }
-            } catch (e: Exception) {
-                Log.w(tag, "Error destroying speech recognizer: ${e.message}")
-            }
+        runOnMain {
+            cleanupRecognizer()
+            Log.d(tag, "Stopped speech listening")
         }
     }
 
     fun destroy() {
         stopListening()
+    }
+
+    private fun runOnMain(block: () -> Unit) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            block()
+        } else {
+            mainHandler.post(block)
+        }
     }
 }

@@ -162,7 +162,7 @@ fun ChatBotScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.padding(8.dp)
                     ) {
-                        CircularProgressIndicator(modifier = Modifier.size(18.dp), color = GeminiCyan, strokeWidth = 2.dp)
+                        GeminiCircularProgressIndicator(modifier = Modifier.size(20.dp))
                         Spacer(modifier = Modifier.width(10.dp))
                         Text("Chitti is thinking...", style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
                     }
