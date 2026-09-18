@@ -1,29 +1,27 @@
 package com.owlcoders.chitti.ui.components
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.*
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.runtime.Composable
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.platform.LocalContext
 import android.content.Intent
 import android.provider.CalendarContract
-import androidx.compose.animation.*
-import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.owlcoders.chitti.ChittiApp
 import com.owlcoders.chitti.db.CapturedEvent
-import com.owlcoders.chitti.ui.theme.ActionRed
-import com.owlcoders.chitti.ui.theme.PaperWhite
+import com.owlcoders.chitti.ui.theme.*
 import kotlinx.coroutines.launch
 
 @Composable
@@ -31,146 +29,230 @@ fun ChittiCard(event: CapturedEvent, onDelete: () -> Unit = {}, modifier: Modifi
     var generatedReply by remember { mutableStateOf<String?>(null) }
     var isGeneratingReply by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    // Slight random rotation for the "sticky note" look
-    val rotation = (event.id.hashCode() % 6) - 3f
     val context = LocalContext.current
 
-    val containerColor = when {
-        event.urgency == "High" -> Color(0xFFFFEBEE)
-        event.category == "Work" -> Color(0xFFE3F2FD)
-        event.category == "Academic" -> Color(0xFFE8F5E9)
-        else -> Color(0xFFFFF9C4) // Classic Yellow Sticky Note
+    val categoryColor = when (event.category) {
+        "Work" -> GeminiCyan
+        "Academic" -> GeminiPurple
+        else -> GeminiBlue
     }
 
+    val urgencyColor = when (event.urgency) {
+        "High" -> GeminiRed
+        "Medium" -> GeminiAmber
+        else -> GeminiGreen
+    }
 
-        Card(
-            modifier = modifier
-                .padding(8.dp)
-                .rotate(rotation)
-                .shadow(
-                    elevation = 6.dp,
-                    shape = RoundedCornerShape(2.dp),
-                    spotColor = Color.Black.copy(alpha = 0.2f)
-                ),
-            shape = RoundedCornerShape(2.dp),
-            colors = CardDefaults.cardColors(containerColor = containerColor)
-        ) {
-            Box {
-                // The Push Pin
-                Text(
-                    text = "📍",
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .offset(y = (-10).dp),
-                    style = MaterialTheme.typography.headlineMedium
-                )
-                
+    Card(
+        modifier = modifier
+            .padding(vertical = 6.dp)
+            .border(1.dp, GeminiBorder.copy(alpha = 0.8f), RoundedCornerShape(20.dp)),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = GeminiSurfaceCard),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(modifier = Modifier.padding(18.dp)) {
+            // Header: Category & Urgency Badges + Delete Button
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Category pill
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = categoryColor.copy(alpha = 0.15f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, categoryColor.copy(alpha = 0.3f))
+                    ) {
+                        Text(
+                            text = event.category ?: "Personal",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = categoryColor,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(8.dp))
+
+                    // Urgency indicator
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = urgencyColor.copy(alpha = 0.15f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, urgencyColor.copy(alpha = 0.3f))
+                    ) {
+                        Text(
+                            text = "${event.urgency ?: "Normal"} Urgency",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = urgencyColor,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                        )
+                    }
+                }
+
                 IconButton(
                     onClick = onDelete,
-                    modifier = Modifier.align(Alignment.TopEnd).padding(4.dp)
+                    modifier = Modifier.size(28.dp)
                 ) {
                     Icon(
-                        imageVector = androidx.compose.material.icons.Icons.Default.Close,
-                        contentDescription = "Delete Task",
-                        tint = Color.Gray
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Dismiss",
+                        tint = TextMuted,
+                        modifier = Modifier.size(18.dp)
                     )
                 }
-                
-                Column(modifier = Modifier.padding(16.dp).padding(top = 8.dp)) {
-                    if (event.status == "pending") {
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Task Title
+            Text(
+                text = event.extractedWhat ?: "Captured Task",
+                style = MaterialTheme.typography.titleMedium.copy(fontSize = 17.sp, lineHeight = 22.sp),
+                fontWeight = FontWeight.SemiBold,
+                color = TextPrimary
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Details: When, Who, Source
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.Schedule, contentDescription = null, tint = GeminiCyan, modifier = Modifier.size(15.dp))
+                Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = "Thinking...",
-                    style = MaterialTheme.typography.titleLarge,
-                    color = Color.Gray
+                    text = event.extractedWhen ?: "Pending",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondary
                 )
-            } else {
-                Text(
-                    text = event.extractedWhat ?: "Unknown Task",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                
-                Text(text = "When: ${event.extractedWhen ?: "Unknown"}")
-                Text(text = "Who: ${event.extractedWho ?: "Unknown"}")
-                Text(text = "Source: ${event.sourceApp}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                
-                Spacer(modifier = Modifier.height(16.dp))
-                
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
-                ) {
-                    TextButton(
-                        onClick = {
-                            isGeneratingReply = true
-                            scope.launch {
-                                val engine = (context.applicationContext as ChittiApp).extractionEngine
-                                generatedReply = engine?.generateSmartReply(event) ?: "Sure, I'll take care of it."
-                                isGeneratingReply = false
-                            }
-                        },
-                        enabled = !isGeneratingReply
-                    ) {
-                        Text(if (isGeneratingReply) "Thinking..." else "✨ Smart Reply", color = Color(0xFF673AB7), fontWeight = FontWeight.Bold)
-                    }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Button(
-                        onClick = {
-                            val intent = Intent(Intent.ACTION_INSERT).apply {
-                                data = CalendarContract.Events.CONTENT_URI
-                                putExtra(CalendarContract.Events.TITLE, event.extractedWhat)
-                                putExtra(CalendarContract.Events.DESCRIPTION, "Source: ${event.sourceApp}\nDetails: ${event.rawText}")
-                            }
-                            context.startActivity(intent)
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = ActionRed)
-                    ) {
-                        Text("Calendar")
-                    }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    OutlinedButton(
-                        onClick = {
-                            try {
-                                val intent = Intent(android.provider.AlarmClock.ACTION_SET_ALARM).apply {
-                                    putExtra(android.provider.AlarmClock.EXTRA_MESSAGE, event.extractedWhat)
-                                    putExtra(android.provider.AlarmClock.EXTRA_SKIP_UI, false)
-                                }
-                                context.startActivity(intent)
-                            } catch (e: Exception) {
-                                try {
-                                    context.startActivity(Intent(android.provider.AlarmClock.ACTION_SHOW_ALARMS))
-                                } catch (e2: Exception) {
-                                    // Ignored if device has no alarm app
-                                }
-                            }
+
+                if (!event.extractedWho.isNullOrBlank() && event.extractedWho != "Self") {
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Icon(Icons.Filled.Person, contentDescription = null, tint = GeminiPurple, modifier = Modifier.size(15.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = event.extractedWho,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextSecondary
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // Action Buttons
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Smart Reply
+                OutlinedButton(
+                    onClick = {
+                        isGeneratingReply = true
+                        scope.launch {
+                            val engine = (context.applicationContext as ChittiApp).extractionEngine
+                            generatedReply = engine?.generateSmartReply(event) ?: "Got it! I will take care of it."
+                            isGeneratingReply = false
                         }
-                    ) {
-                        Text("Reminder")
-                    }
+                    },
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = GeminiCyan),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, GeminiCyan.copy(alpha = 0.5f)),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                    modifier = Modifier.height(34.dp)
+                ) {
+                    Icon(Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.size(14.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(if (isGeneratingReply) "Thinking..." else "Reply", style = MaterialTheme.typography.labelSmall)
                 }
 
-                if (generatedReply != null) {
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Box(modifier = Modifier.fillMaxWidth().background(Color.White.copy(alpha = 0.5f), RoundedCornerShape(8.dp)).padding(12.dp)) {
-                        Column {
-                            Text("Drafted Reply:", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
-                            Text(generatedReply!!, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                                TextButton(onClick = {
+                // Calendar
+                Button(
+                    onClick = {
+                        val intent = Intent(Intent.ACTION_INSERT).apply {
+                            data = CalendarContract.Events.CONTENT_URI
+                            putExtra(CalendarContract.Events.TITLE, event.extractedWhat)
+                            putExtra(CalendarContract.Events.DESCRIPTION, "Source: ${event.sourceApp}\nDetails: ${event.rawText}")
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        context.startActivity(intent)
+                    },
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = GeminiBlue),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                    modifier = Modifier.height(34.dp)
+                ) {
+                    Icon(Icons.Filled.Event, contentDescription = null, modifier = Modifier.size(14.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Calendar", style = MaterialTheme.typography.labelSmall)
+                }
+
+                // Reminder / Alarm
+                FilledTonalButton(
+                    onClick = {
+                        try {
+                            val intent = Intent(android.provider.AlarmClock.ACTION_SET_ALARM).apply {
+                                putExtra(android.provider.AlarmClock.EXTRA_MESSAGE, event.extractedWhat)
+                                putExtra(android.provider.AlarmClock.EXTRA_SKIP_UI, false)
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            }
+                            context.startActivity(intent)
+                        } catch (e: Exception) {
+                            // ignore if alarm provider missing
+                        }
+                    },
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.filledTonalButtonColors(containerColor = GeminiSurfaceElevated, contentColor = TextPrimary),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                    modifier = Modifier.height(34.dp)
+                ) {
+                    Icon(Icons.Filled.Notifications, contentDescription = null, modifier = Modifier.size(14.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Remind", style = MaterialTheme.typography.labelSmall)
+                }
+            }
+
+            // Smart Reply Output Card
+            if (generatedReply != null) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    color = GeminiSurfaceElevated,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, GeminiBorder)
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Filled.AutoAwesome, contentDescription = null, tint = GeminiCyan, modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Drafted Smart Reply:", style = MaterialTheme.typography.labelSmall, color = GeminiCyan)
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = generatedReply!!,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = TextPrimary
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End
+                        ) {
+                            TextButton(
+                                onClick = {
                                     val sendIntent = Intent().apply {
                                         action = Intent.ACTION_SEND
                                         putExtra(Intent.EXTRA_TEXT, generatedReply)
                                         type = "text/plain"
                                     }
                                     context.startActivity(Intent.createChooser(sendIntent, "Send Smart Reply"))
-                                }) {
-                                    Text("Send")
                                 }
+                            ) {
+                                Text("Send via App", color = GeminiCyan, style = MaterialTheme.typography.labelSmall)
                             }
                         }
                     }
-                }
                 }
             }
         }

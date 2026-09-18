@@ -1,7 +1,8 @@
 package com.owlcoders.chitti
 
+import android.Manifest
 import android.content.Intent
-import android.graphics.Bitmap
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.os.PowerManager
@@ -11,65 +12,169 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.text.TextRecognition
-import com.google.mlkit.vision.text.latin.TextRecognizerOptions
-import com.owlcoders.chitti.db.CapturedEvent
+import com.owlcoders.chitti.automation.*
 import com.owlcoders.chitti.db.entities.ChatHistoryEntity
 import com.owlcoders.chitti.db.entities.Memory
+import com.owlcoders.chitti.services.SpeechToTextManager
+import com.owlcoders.chitti.services.TtsEngine
+import com.owlcoders.chitti.ui.components.GeminiVoiceOverlay
+import com.owlcoders.chitti.ui.components.VoiceAssistantState
 import com.owlcoders.chitti.ui.screens.*
-import com.owlcoders.chitti.ui.theme.ChittiTheme
+import com.owlcoders.chitti.ui.theme.*
 import kotlinx.coroutines.launch
 
-// Navigation routes
 sealed class Screen(val route: String, val icon: ImageVector, val label: String) {
-    object Home : Screen("home", Icons.Filled.Home, "Desk")
+    object Home : Screen("home", Icons.Filled.Home, "Today")
+    object Files : Screen("files", Icons.Filled.FolderOpen, "Files")
     object Chat : Screen("chat", Icons.Filled.SmartToy, "Chat")
     object Inbox : Screen("inbox", Icons.Filled.Inbox, "Inbox")
     object Dashboard : Screen("dashboard", Icons.Filled.Dashboard, "Stats")
     object Automation : Screen("automation", Icons.Filled.AutoAwesome, "Actions")
-    object Documents : Screen("documents", Icons.Filled.Description, "Docs")
     object Memory : Screen("memory", Icons.Filled.Psychology, "Memory")
     object AiLab : Screen("ailab", Icons.Filled.Science, "AI Lab")
     object Settings : Screen("settings", Icons.Filled.Settings, "Settings")
 }
 
 class MainActivity : ComponentActivity() {
+    private var ttsEngine: TtsEngine? = null
+    private var sttManager: SpeechToTextManager? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
         requestBatteryOptimizationExemption()
+
+        val tts = TtsEngine(this)
+        ttsEngine = tts
 
         setContent {
             ChittiTheme {
                 val navController = rememberNavController()
                 val scope = rememberCoroutineScope()
+                val context = LocalContext.current
                 val app = application as ChittiApp
 
-                // ----- Collect Data from Room -----
-                var searchQuery by remember { mutableStateOf("") }
+                // Automation & Assistant helpers
+                val appLauncher = remember { AppLauncher(context) }
+                val documentFinder = remember { DocumentFinder(context, app.database) }
+                val fileFinder = remember { FileFinder(context, app.database) }
+                val dispatcher = remember { AssistantIntentDispatcher(context, appLauncher, fileFinder, documentFinder, tts) }
 
-                val events by if (searchQuery.isEmpty()) {
-                    app.database.eventDao().getAllEvents().collectAsState(initial = emptyList())
-                } else {
-                    app.database.eventDao().searchEvents(searchQuery).collectAsState(initial = emptyList())
+                // Assistant Voice State
+                var voiceState by remember { mutableStateOf(VoiceAssistantState.IDLE) }
+                var transcript by remember { mutableStateOf("") }
+                var rmsLevel by remember { mutableFloatStateOf(0.1f) }
+                var currentAssistantResponse by remember { mutableStateOf<AssistantResponse?>(null) }
+
+                // Initialize STT Manager
+                val stt = remember {
+                    SpeechToTextManager(
+                        context = context,
+                        onPartialResult = { partial ->
+                            transcript = partial
+                        },
+                        onFinalResult = { finalQuery ->
+                            transcript = finalQuery
+                            voiceState = VoiceAssistantState.THINKING
+                            scope.launch {
+                                val response = dispatcher.processQuery(finalQuery, emptyList(), shouldSpeak = true)
+                                currentAssistantResponse = response
+                                voiceState = VoiceAssistantState.SPEAKING
+                            }
+                        },
+                        onRmsChanged = { rms ->
+                            rmsLevel = rms
+                        },
+                        onError = { errMsg ->
+                            Log.w("ChittiMain", "STT Error: $errMsg")
+                            if (voiceState == VoiceAssistantState.LISTENING) {
+                                voiceState = VoiceAssistantState.RESULT
+                                currentAssistantResponse = AssistantResponse(
+                                    message = errMsg,
+                                    spokenText = errMsg,
+                                    actionSuccess = false
+                                )
+                            }
+                        },
+                        onStateChange = { state ->
+                            when (state) {
+                                SpeechToTextManager.SpeechState.READY,
+                                SpeechToTextManager.SpeechState.LISTENING -> {
+                                    voiceState = VoiceAssistantState.LISTENING
+                                }
+                                SpeechToTextManager.SpeechState.PROCESSING -> {
+                                    if (voiceState == VoiceAssistantState.LISTENING) {
+                                        voiceState = VoiceAssistantState.THINKING
+                                    }
+                                }
+                                else -> {}
+                            }
+                        }
+                    )
+                }
+                sttManager = stt
+
+                // Audio permission launcher
+                val audioPermissionLauncher = rememberLauncherForActivityResult(
+                    contract = ActivityResultContracts.RequestPermission()
+                ) { isGranted ->
+                    if (isGranted) {
+                        transcript = ""
+                        currentAssistantResponse = null
+                        voiceState = VoiceAssistantState.LISTENING
+                        stt.startListening()
+                    } else {
+                        voiceState = VoiceAssistantState.RESULT
+                        currentAssistantResponse = AssistantResponse(
+                            message = "Microphone permission is required to talk to Chitti.",
+                            spokenText = "Microphone permission is required to talk to Chitti.",
+                            actionSuccess = false
+                        )
+                    }
                 }
 
+                fun startVoiceInput() {
+                    tts.stop()
+                    val hasPerm = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+                    if (hasPerm) {
+                        transcript = ""
+                        currentAssistantResponse = null
+                        voiceState = VoiceAssistantState.LISTENING
+                        stt.startListening()
+                    } else {
+                        audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                    }
+                }
+
+                // ----- Collect Data from Room -----
+                val events by app.database.eventDao().getAllEvents().collectAsState(initial = emptyList())
                 val tasks by app.database.taskDao().getAllTasks().collectAsState(initial = emptyList())
                 val notifications by app.database.notificationDao().getAllNotifications().collectAsState(initial = emptyList())
                 val memories by app.database.memoryDao().getAllMemories().collectAsState(initial = emptyList())
@@ -78,7 +183,6 @@ class MainActivity : ComponentActivity() {
                 val automationHistory by app.database.automationHistoryDao().getRecentHistory(100).collectAsState(initial = emptyList())
                 val chatHistory by app.database.chatHistoryDao().getAllMessages().collectAsState(initial = emptyList())
 
-                // ----- Counts for dashboard/settings -----
                 var notificationCount by remember { mutableIntStateOf(0) }
                 var memoryCount by remember { mutableIntStateOf(0) }
                 var documentCount by remember { mutableIntStateOf(0) }
@@ -94,253 +198,250 @@ class MainActivity : ComponentActivity() {
                 var hasNotificationAccess by remember { mutableStateOf(isNotificationServiceEnabled()) }
                 var previewMode by remember { mutableStateOf(false) }
 
-                // Camera launcher for OCR
-                val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicturePreview()) { bitmap: Bitmap? ->
-                    if (bitmap != null) {
-                        Log.d("ChittiVision", "Captured image. Running OCR...")
-                        val image = InputImage.fromBitmap(bitmap, 0)
-                        val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
-                        recognizer.process(image)
-                            .addOnSuccessListener { visionText ->
-                                Log.d("ChittiVision", "OCR Text: ${visionText.text}")
-                                scope.launch {
-                                    val engine = app.extractionEngine
-                                    val extracted = engine?.extract("OCR FROM FLYER: ${visionText.text}")
-                                    app.database.eventDao().insertEvent(
-                                        CapturedEvent(
-                                            sourceApp = "com.owlcoders.chitti.vision",
-                                            rawText = "Flyer text: ${visionText.text.take(50)}...",
-                                            extractedWhat = extracted?.what,
-                                            extractedWhen = extracted?.whenTime,
-                                            extractedWho = extracted?.who,
-                                            category = extracted?.category,
-                                            urgency = extracted?.urgency,
-                                            status = "extracted",
-                                            timestamp = System.currentTimeMillis()
-                                        )
-                                    )
-                                }
-                            }
-                            .addOnFailureListener { e ->
-                                Log.e("ChittiVision", "OCR Failed", e)
-                            }
-                    }
-                }
-
-                // ----- UI -----
-                if (hasNotificationAccess || previewMode) {
-                    ChittiScaffold(
-                        navController = navController,
-                        onFabClick = { cameraLauncher.launch(null) }
-                    ) { innerPadding ->
-                        NavHost(
+                // Main App Structure
+                Box(modifier = Modifier.fillMaxSize().background(GeminiDarkBg)) {
+                    if (hasNotificationAccess || previewMode) {
+                        ChittiScaffold(
                             navController = navController,
-                            startDestination = Screen.Home.route,
-                            modifier = Modifier.padding(innerPadding)
-                        ) {
-                            composable(Screen.Home.route) {
-                                Column(modifier = Modifier.fillMaxSize()) {
-                                    OutlinedTextField(
-                                        value = searchQuery,
-                                        onValueChange = { searchQuery = it },
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(16.dp),
-                                        placeholder = { Text("Search Contextual Memory...") },
-                                        leadingIcon = { Icon(Icons.Filled.Search, contentDescription = "Search") },
-                                        colors = OutlinedTextFieldDefaults.colors(
-                                            focusedContainerColor = androidx.compose.ui.graphics.Color.White,
-                                            unfocusedContainerColor = androidx.compose.ui.graphics.Color.White
-                                        )
-                                    )
+                            onMicClick = { startVoiceInput() }
+                        ) { innerPadding ->
+                            NavHost(
+                                navController = navController,
+                                startDestination = Screen.Home.route,
+                                modifier = Modifier.padding(innerPadding)
+                            ) {
+                                composable(Screen.Home.route) {
                                     TodayScreen(
                                         events = events,
                                         onDeleteEvent = { event ->
+                                            scope.launch { app.database.eventDao().deleteEvent(event) }
+                                        },
+                                        onQuickAction = { actionQuery ->
                                             scope.launch {
-                                                app.database.eventDao().deleteEvent(event)
+                                                val resp = dispatcher.processQuery(actionQuery, events, shouldSpeak = true)
+                                                currentAssistantResponse = resp
+                                                transcript = actionQuery
+                                                voiceState = VoiceAssistantState.RESULT
                                             }
                                         }
                                     )
                                 }
-                            }
 
-                            composable(Screen.Chat.route) {
-                                ChatBotScreen(
-                                    events = events,
-                                    chatHistory = chatHistory,
-                                    memories = memories,
-                                    onSaveMessage = { message ->
-                                        scope.launch {
-                                            app.database.chatHistoryDao().insertMessage(message)
+                                composable(Screen.Files.route) {
+                                    FilesScreen(
+                                        fileFinder = fileFinder,
+                                        onImportUri = { uri ->
+                                            scope.launch {
+                                                documentFinder.importDocumentUri(uri)
+                                            }
+                                        },
+                                        onScanBitmap = { bitmap ->
+                                            scope.launch {
+                                                documentFinder.importBitmapFromCamera(bitmap)
+                                            }
+                                        },
+                                        onOpenFile = { file ->
+                                            fileFinder.openFile(file)
                                         }
-                                    }
+                                    )
+                                }
+
+                                composable(Screen.Chat.route) {
+                                    ChatBotScreen(
+                                        events = events,
+                                        chatHistory = chatHistory,
+                                        memories = memories,
+                                        dispatcher = dispatcher,
+                                        ttsEngine = tts,
+                                        onSaveMessage = { message ->
+                                            scope.launch { app.database.chatHistoryDao().insertMessage(message) }
+                                        },
+                                        onStartVoice = { startVoiceInput() }
+                                    )
+                                }
+
+                                composable(Screen.Inbox.route) {
+                                    InboxScreen(
+                                        notifications = notifications,
+                                        onMarkProcessed = { notification ->
+                                            scope.launch { app.database.notificationDao().markProcessed(notification.id) }
+                                        },
+                                        onDelete = { notification ->
+                                            scope.launch { app.database.notificationDao().deleteNotification(notification) }
+                                        }
+                                    )
+                                }
+
+                                composable(Screen.Dashboard.route) {
+                                    DashboardScreen(
+                                        events = events,
+                                        tasks = tasks,
+                                        notificationCount = notificationCount,
+                                        memoryCount = memoryCount,
+                                        documentCount = documentCount,
+                                        automationCount = automationHistoryCount
+                                    )
+                                }
+
+                                composable(Screen.Automation.route) {
+                                    AutomationScreen(history = automationHistory)
+                                }
+
+                                composable(Screen.Memory.route) {
+                                    MemoryScreen(
+                                        memories = memories,
+                                        categories = memoryCategories,
+                                        onAddMemory = { key, value, category ->
+                                            scope.launch {
+                                                app.database.memoryDao().insertMemory(Memory(key = key, value = value, category = category))
+                                            }
+                                        },
+                                        onDeleteMemory = { memory ->
+                                            scope.launch { app.database.memoryDao().deleteMemory(memory) }
+                                        },
+                                        onUpdateMemory = { memory ->
+                                            scope.launch { app.database.memoryDao().updateMemory(memory) }
+                                        }
+                                    )
+                                }
+
+                                composable(Screen.AiLab.route) {
+                                    AiLabScreen(
+                                        onAddEvent = { event, task ->
+                                            scope.launch {
+                                                app.database.eventDao().insertEvent(event)
+                                                app.database.taskDao().insertTask(task)
+                                            }
+                                        }
+                                    )
+                                }
+
+                                composable(Screen.Settings.route) {
+                                    SettingsScreen(
+                                        hasNotificationAccess = hasNotificationAccess,
+                                        onWipeData = {
+                                            scope.launch {
+                                                app.database.eventDao().deleteAllEvents()
+                                                app.database.notificationDao().deleteAllNotifications()
+                                                app.database.chatHistoryDao().deleteAllMessages()
+                                                app.database.automationHistoryDao().deleteAllHistory()
+                                                app.database.documentDao().getAllDocuments()
+                                            }
+                                        },
+                                        eventCount = events.size,
+                                        taskCount = tasks.size,
+                                        notificationCount = notificationCount,
+                                        memoryCount = memoryCount,
+                                        documentCount = documentCount,
+                                        chatMessageCount = chatMessageCount,
+                                        automationHistoryCount = automationHistoryCount,
+                                        onClearNotifications = { scope.launch { app.database.notificationDao().deleteAllNotifications() } },
+                                        onClearChatHistory = { scope.launch { app.database.chatHistoryDao().deleteAllMessages() } },
+                                        onClearAutomationHistory = { scope.launch { app.database.automationHistoryDao().deleteAllHistory() } },
+                                        onClearMemories = { scope.launch { memories.forEach { app.database.memoryDao().deleteMemory(it) } } }
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        // Onboarding Notification permission request
+                        Surface(modifier = Modifier.fillMaxSize(), color = GeminiDarkBg) {
+                            Column(
+                                modifier = Modifier.fillMaxSize().padding(24.dp),
+                                verticalArrangement = Arrangement.Center,
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Box(
+                                    modifier = Modifier.size(72.dp).clip(CircleShape).background(Brush.radialGradient(listOf(GeminiCyan, GeminiBlue))),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(Icons.Filled.AutoAwesome, contentDescription = null, tint = Color.White, modifier = Modifier.size(36.dp))
+                                }
+                                Spacer(modifier = Modifier.height(20.dp))
+                                Text("Chitti Assistant", style = MaterialTheme.typography.headlineLarge, color = TextPrimary, fontWeight = FontWeight.Bold)
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text("Your On-Device AI Personal Mobile Assistant", style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
+                                Spacer(modifier = Modifier.height(32.dp))
+                                Text(
+                                    "Chitti needs Notification Listener access to automatically organize tasks and commitments for you.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = TextMuted,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
                                 )
-                            }
-
-                            composable(Screen.Inbox.route) {
-                                InboxScreen(
-                                    notifications = notifications,
-                                    onMarkProcessed = { notification ->
-                                        scope.launch {
-                                            app.database.notificationDao().markProcessed(notification.id)
-                                        }
-                                    },
-                                    onDelete = { notification ->
-                                        scope.launch {
-                                            app.database.notificationDao().deleteNotification(notification)
-                                        }
-                                    }
-                                )
-                            }
-
-                            composable(Screen.Dashboard.route) {
-                                DashboardScreen(
-                                    events = events,
-                                    tasks = tasks,
-                                    notificationCount = notificationCount,
-                                    memoryCount = memoryCount,
-                                    documentCount = documentCount,
-                                    automationCount = automationHistoryCount
-                                )
-                            }
-
-                            composable(Screen.Automation.route) {
-                                AutomationScreen(history = automationHistory)
-                            }
-
-                            composable(Screen.Documents.route) {
-                                DocumentsScreen(
-                                    documents = documents,
-                                    onPickFile = {
-                                        // Launch SAF file picker
-                                        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                                            addCategory(Intent.CATEGORY_OPENABLE)
-                                            type = "*/*"
-                                        }
+                                Spacer(modifier = Modifier.height(24.dp))
+                                Button(
+                                    onClick = {
+                                        val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
                                         startActivity(intent)
                                     },
-                                    onDeleteDocument = { doc ->
-                                        scope.launch {
-                                            app.database.documentDao().deleteDocument(doc)
-                                        }
-                                    }
-                                )
-                            }
-
-                            composable(Screen.Memory.route) {
-                                MemoryScreen(
-                                    memories = memories,
-                                    categories = memoryCategories,
-                                    onAddMemory = { key, value, category ->
-                                        scope.launch {
-                                            app.database.memoryDao().insertMemory(
-                                                Memory(key = key, value = value, category = category)
-                                            )
-                                        }
-                                    },
-                                    onDeleteMemory = { memory ->
-                                        scope.launch {
-                                            app.database.memoryDao().deleteMemory(memory)
-                                        }
-                                    },
-                                    onUpdateMemory = { memory ->
-                                        scope.launch {
-                                            app.database.memoryDao().updateMemory(memory)
-                                        }
-                                    }
-                                )
-                            }
-
-                            composable(Screen.AiLab.route) {
-                                AiLabScreen(
-                                    onAddEvent = { event, task ->
-                                        scope.launch {
-                                            app.database.eventDao().insertEvent(event)
-                                            app.database.taskDao().insertTask(task)
-                                        }
-                                    }
-                                )
-                            }
-
-                            composable(Screen.Settings.route) {
-                                SettingsScreen(
-                                    hasNotificationAccess = hasNotificationAccess,
-                                    onWipeData = {
-                                        scope.launch {
-                                            app.database.eventDao().deleteAllEvents()
-                                            app.database.notificationDao().deleteAllNotifications()
-                                            app.database.chatHistoryDao().deleteAllMessages()
-                                            app.database.automationHistoryDao().deleteAllHistory()
-                                        }
-                                    },
-                                    eventCount = events.size,
-                                    taskCount = tasks.size,
-                                    notificationCount = notificationCount,
-                                    memoryCount = memoryCount,
-                                    documentCount = documentCount,
-                                    chatMessageCount = chatMessageCount,
-                                    automationHistoryCount = automationHistoryCount,
-                                    onClearNotifications = {
-                                        scope.launch { app.database.notificationDao().deleteAllNotifications() }
-                                    },
-                                    onClearChatHistory = {
-                                        scope.launch { app.database.chatHistoryDao().deleteAllMessages() }
-                                    },
-                                    onClearAutomationHistory = {
-                                        scope.launch { app.database.automationHistoryDao().deleteAllHistory() }
-                                    },
-                                    onClearMemories = {
-                                        scope.launch {
-                                            memories.forEach { app.database.memoryDao().deleteMemory(it) }
-                                        }
-                                    }
-                                )
+                                    colors = ButtonDefaults.buttonColors(containerColor = GeminiBlue),
+                                    shape = RoundedCornerShape(14.dp),
+                                    modifier = Modifier.fillMaxWidth().height(48.dp)
+                                ) {
+                                    Text("Enable Notification Access", fontWeight = FontWeight.SemiBold)
+                                }
+                                Spacer(modifier = Modifier.height(12.dp))
+                                OutlinedButton(
+                                    onClick = { hasNotificationAccess = isNotificationServiceEnabled() },
+                                    shape = RoundedCornerShape(14.dp),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = GeminiCyan),
+                                    modifier = Modifier.fillMaxWidth().height(48.dp)
+                                ) {
+                                    Text("I've Enabled It — Continue")
+                                }
+                                Spacer(modifier = Modifier.height(12.dp))
+                                TextButton(onClick = { previewMode = true }) {
+                                    Text("Explore Assistant (Preview Mode)", color = TextSecondary)
+                                }
                             }
                         }
                     }
-                } else {
-                    // Onboarding: Request notification access
-                    Surface(
-                        modifier = Modifier.fillMaxSize(),
-                        color = MaterialTheme.colorScheme.background
-                    ) {
-                        Column(
-                            modifier = Modifier.fillMaxSize(),
-                            verticalArrangement = Arrangement.Center,
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Text("🤖 Chitti", style = MaterialTheme.typography.headlineLarge)
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text("Offline AI Personal Assistant")
-                            Spacer(modifier = Modifier.height(24.dp))
-                            Text("Chitti needs Notification Listener access to work")
-                            Spacer(modifier = Modifier.height(16.dp))
-                            Button(onClick = {
-                                val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
-                                startActivity(intent)
-                            }) {
-                                Text("Enable Notification Access")
-                            }
-                            Spacer(modifier = Modifier.height(16.dp))
-                            OutlinedButton(onClick = { hasNotificationAccess = isNotificationServiceEnabled() }) {
-                                Text("I've Enabled It — Continue")
-                            }
-                            Spacer(modifier = Modifier.height(8.dp))
-                            TextButton(onClick = { previewMode = true }) {
-                                Text("Explore App (Preview Mode)")
+
+                    // Global Gemini Voice Overlay
+                    GeminiVoiceOverlay(
+                        state = voiceState,
+                        transcript = transcript,
+                        rmsLevel = rmsLevel,
+                        assistantResponse = currentAssistantResponse,
+                        onMicClick = { startVoiceInput() },
+                        onDismiss = {
+                            stt.stopListening()
+                            tts.stop()
+                            voiceState = VoiceAssistantState.IDLE
+                        },
+                        onStopSpeech = {
+                            tts.stop()
+                            voiceState = VoiceAssistantState.RESULT
+                        },
+                        onDocumentClick = { uriStr ->
+                            try {
+                                val viewIntent = Intent(Intent.ACTION_VIEW, Uri.parse(uriStr)).apply {
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                }
+                                context.startActivity(viewIntent)
+                            } catch (e: Exception) {
+                                Log.e("ChittiMain", "Could not open document: ${e.message}")
                             }
                         }
-                    }
+                    )
                 }
             }
         }
     }
 
+    override fun onDestroy() {
+        super.onDestroy()
+        sttManager?.destroy()
+        ttsEngine?.shutdown()
+    }
+
     private fun requestBatteryOptimizationExemption() {
         val pm = getSystemService(POWER_SERVICE) as PowerManager
         if (!pm.isIgnoringBatteryOptimizations(packageName)) {
-            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
-            intent.data = Uri.parse("package:$packageName")
+            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                data = Uri.parse("package:$packageName")
+            }
             startActivity(intent)
         }
     }
@@ -354,72 +455,141 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun ChittiScaffold(
     navController: NavHostController,
-    onFabClick: () -> Unit,
+    onMicClick: () -> Unit,
     content: @Composable (PaddingValues) -> Unit
 ) {
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
 
-    // Bottom nav shows 5 primary destinations
-    val bottomScreens = listOf(Screen.Home, Screen.Chat, Screen.Inbox, Screen.Dashboard, Screen.Settings)
-    // Drawer/secondary destinations
-    val drawerScreens = listOf(Screen.AiLab, Screen.Automation, Screen.Documents, Screen.Memory)
-
+    val drawerScreens = listOf(Screen.Inbox, Screen.Dashboard, Screen.Automation, Screen.Memory, Screen.AiLab, Screen.Settings)
     var showMoreMenu by remember { mutableStateOf(false) }
 
+    val infiniteTransition = rememberInfiniteTransition()
+    val pulseScale by infiniteTransition.animateFloat(
+        initialValue = 1f,
+        targetValue = 1.14f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1200, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        )
+    )
+
     Scaffold(
+        containerColor = GeminiDarkBg,
         bottomBar = {
-            NavigationBar {
-                bottomScreens.forEach { screen ->
-                    NavigationBarItem(
-                        icon = { Icon(screen.icon, contentDescription = screen.label) },
-                        label = { Text(screen.label) },
-                        selected = currentRoute == screen.route,
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = GeminiSurface,
+                border = androidx.compose.foundation.BorderStroke(0.5.dp, GeminiBorder)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceAround,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // 1. Home / Today
+                    BottomNavItem(
+                        screen = Screen.Home,
+                        isSelected = currentRoute == Screen.Home.route,
                         onClick = {
-                            if (currentRoute != screen.route) {
-                                navController.navigate(screen.route) {
-                                    popUpTo(Screen.Home.route) { saveState = true }
-                                    launchSingleTop = true
-                                    restoreState = true
-                                }
+                            navController.navigate(Screen.Home.route) {
+                                popUpTo(Screen.Home.route) { saveState = true }
+                                launchSingleTop = true
+                                restoreState = true
                             }
                         }
                     )
-                }
-            }
-        },
-        topBar = {
-            @OptIn(ExperimentalMaterial3Api::class)
-            TopAppBar(
-                title = {
-                    Text(
-                        when (currentRoute) {
-                            Screen.Home.route -> "Chitti"
-                            Screen.Chat.route -> "AI Chat"
-                            Screen.Inbox.route -> "Inbox"
-                            Screen.Dashboard.route -> "Dashboard"
-                            Screen.Settings.route -> "Settings"
-                            Screen.AiLab.route -> "AI Lab & Benchmark"
-                            Screen.Automation.route -> "Automation"
-                            Screen.Documents.route -> "Documents"
-                            Screen.Memory.route -> "Memory"
-                            else -> "Chitti"
+
+                    // 2. Files Finder
+                    BottomNavItem(
+                        screen = Screen.Files,
+                        isSelected = currentRoute == Screen.Files.route,
+                        onClick = {
+                            navController.navigate(Screen.Files.route) {
+                                popUpTo(Screen.Home.route) { saveState = true }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
                         }
                     )
-                },
-                actions = {
-                    Box {
-                        IconButton(onClick = { showMoreMenu = true }) {
-                            Icon(Icons.Filled.MoreVert, contentDescription = "More")
+
+                    // 3. Center Glowing Gemini Assistant Mic Button
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier.offset(y = (-10).dp)
+                    ) {
+                        // Pulsing ambient halo
+                        Box(
+                            modifier = Modifier
+                                .size(58.dp)
+                                .scale(pulseScale)
+                                .clip(CircleShape)
+                                .background(
+                                    Brush.radialGradient(
+                                        listOf(GeminiCyan.copy(alpha = 0.5f), GeminiBlue.copy(alpha = 0.3f), Color.Transparent)
+                                    )
+                                )
+                        )
+
+                        Surface(
+                            modifier = Modifier
+                                .size(52.dp)
+                                .clip(CircleShape)
+                                .clickable(onClick = onMicClick),
+                            shape = CircleShape,
+                            color = GeminiSurfaceElevated,
+                            border = androidx.compose.foundation.BorderStroke(2.dp, GeminiGradient),
+                            shadowElevation = 10.dp
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Filled.Mic,
+                                    contentDescription = "Assistant Voice",
+                                    tint = GeminiCyan,
+                                    modifier = Modifier.size(26.dp)
+                                )
+                            }
                         }
+                    }
+
+                    // 4. AI Chat
+                    BottomNavItem(
+                        screen = Screen.Chat,
+                        isSelected = currentRoute == Screen.Chat.route,
+                        onClick = {
+                            navController.navigate(Screen.Chat.route) {
+                                popUpTo(Screen.Home.route) { saveState = true }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
+                        }
+                    )
+
+                    // 5. More Menu
+                    Box {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable { showMoreMenu = true }
+                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            Icon(Icons.Filled.MoreHoriz, contentDescription = "More", tint = TextSecondary, modifier = Modifier.size(24.dp))
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text("More", style = MaterialTheme.typography.labelSmall, color = TextSecondary)
+                        }
+
                         DropdownMenu(
                             expanded = showMoreMenu,
-                            onDismissRequest = { showMoreMenu = false }
+                            onDismissRequest = { showMoreMenu = false },
+                            modifier = Modifier.background(GeminiSurfaceElevated).border(1.dp, GeminiBorder, RoundedCornerShape(12.dp))
                         ) {
                             drawerScreens.forEach { screen ->
                                 DropdownMenuItem(
-                                    text = { Text(screen.label) },
-                                    leadingIcon = { Icon(screen.icon, contentDescription = screen.label) },
+                                    text = { Text(screen.label, color = TextPrimary) },
+                                    leadingIcon = { Icon(screen.icon, contentDescription = screen.label, tint = GeminiCyan) },
                                     onClick = {
                                         showMoreMenu = false
                                         navController.navigate(screen.route) {
@@ -433,15 +603,28 @@ fun ChittiScaffold(
                         }
                     }
                 }
-            )
-        },
-        floatingActionButton = {
-            if (currentRoute == Screen.Home.route) {
-                FloatingActionButton(onClick = onFabClick) {
-                    Icon(Icons.Filled.CameraAlt, contentDescription = "Scan Flyer")
-                }
             }
         },
         content = content
     )
+}
+
+@Composable
+fun BottomNavItem(
+    screen: Screen,
+    isSelected: Boolean,
+    onClick: () -> Unit
+) {
+    val tint = if (isSelected) GeminiCyan else TextSecondary
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 6.dp)
+    ) {
+        Icon(screen.icon, contentDescription = screen.label, tint = tint, modifier = Modifier.size(24.dp))
+        Spacer(modifier = Modifier.height(2.dp))
+        Text(screen.label, style = MaterialTheme.typography.labelSmall, color = tint, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal)
+    }
 }
