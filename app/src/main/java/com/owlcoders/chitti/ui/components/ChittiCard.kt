@@ -1,7 +1,12 @@
 package com.owlcoders.chitti.ui.components
 
+import android.content.ActivityNotFoundException
+import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.provider.AlarmClock
 import android.provider.CalendarContract
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -23,6 +28,51 @@ import com.owlcoders.chitti.ChittiApp
 import com.owlcoders.chitti.db.CapturedEvent
 import com.owlcoders.chitti.ui.theme.*
 import kotlinx.coroutines.launch
+
+/**
+ * The Clock app's ACTION_SET_ALARM / ACTION_SET_TIMER handler is protected by the
+ * normal permission com.android.alarm.permission.SET_ALARM. It is granted at install
+ * only if the manifest declares it; without it startActivity throws SecurityException.
+ */
+private const val SET_ALARM_PERMISSION = "com.android.alarm.permission.SET_ALARM"
+
+private fun hasSetAlarmPermission(context: Context): Boolean =
+    context.checkSelfPermission(SET_ALARM_PERMISSION) == PackageManager.PERMISSION_GRANTED
+
+private fun toast(context: Context, message: String) {
+    Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+}
+
+/** Try the alarm app first, fall back to a timer, and surface any failure to the user. */
+private fun launchReminder(context: Context, event: CapturedEvent) {
+    val title = event.extractedWhat ?: "Chitti reminder"
+    val alarmIntent = Intent(AlarmClock.ACTION_SET_ALARM).apply {
+        putExtra(AlarmClock.EXTRA_MESSAGE, title)
+        putExtra(AlarmClock.EXTRA_SKIP_UI, false)
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    try {
+        context.startActivity(alarmIntent)
+        return
+    } catch (e: ActivityNotFoundException) {
+        // fall through to timer
+    } catch (e: SecurityException) {
+        toast(context, "Reminders need the alarm permission (SET_ALARM)")
+        return
+    }
+    val timerIntent = Intent(AlarmClock.ACTION_SET_TIMER).apply {
+        putExtra(AlarmClock.EXTRA_MESSAGE, title)
+        putExtra(AlarmClock.EXTRA_SKIP_UI, false)
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    try {
+        context.startActivity(timerIntent)
+    } catch (e: ActivityNotFoundException) {
+        toast(context, "No clock app found to set a reminder")
+    } catch (e: SecurityException) {
+        toast(context, "Reminders need the alarm permission (SET_ALARM)")
+    }
+}
 
 @Composable
 fun ChittiCard(event: CapturedEvent, modifier: Modifier = Modifier, onDelete: () -> Unit = {}) {
@@ -150,13 +200,22 @@ fun ChittiCard(event: CapturedEvent, modifier: Modifier = Modifier, onDelete: ()
                 // Smart Reply
                 OutlinedButton(
                     onClick = {
+                        if (isGeneratingReply) return@OutlinedButton
                         isGeneratingReply = true
+                        // generateSmartReply is a suspend fun that switches to IO internally;
+                        // keep this on the composable scope, never runBlocking.
                         scope.launch {
-                            val engine = (context.applicationContext as ChittiApp).extractionEngine
-                            generatedReply = engine?.generateSmartReply(event) ?: "Got it! I will take care of it."
-                            isGeneratingReply = false
+                            try {
+                                val engine = (context.applicationContext as ChittiApp).extractionEngine
+                                generatedReply = engine?.generateSmartReply(event) ?: "Got it! I will take care of it."
+                            } catch (e: Exception) {
+                                toast(context, "Could not draft a reply")
+                            } finally {
+                                isGeneratingReply = false
+                            }
                         }
                     },
+                    enabled = !isGeneratingReply,
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = GeminiCyan),
                     border = androidx.compose.foundation.BorderStroke(1.dp, GeminiCyan.copy(alpha = 0.5f)),
@@ -177,7 +236,11 @@ fun ChittiCard(event: CapturedEvent, modifier: Modifier = Modifier, onDelete: ()
                             putExtra(CalendarContract.Events.DESCRIPTION, "Source: ${event.sourceApp}\nDetails: ${event.rawText}")
                             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                         }
-                        context.startActivity(intent)
+                        try {
+                            context.startActivity(intent)
+                        } catch (e: ActivityNotFoundException) {
+                            toast(context, "No calendar app found")
+                        }
                     },
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = GeminiBlue),
@@ -191,20 +254,14 @@ fun ChittiCard(event: CapturedEvent, modifier: Modifier = Modifier, onDelete: ()
 
                 // Reminder / Alarm
                 FilledTonalButton(
-                    onClick = {
-                        try {
-                            val intent = Intent(android.provider.AlarmClock.ACTION_SET_ALARM).apply {
-                                putExtra(android.provider.AlarmClock.EXTRA_MESSAGE, event.extractedWhat)
-                                putExtra(android.provider.AlarmClock.EXTRA_SKIP_UI, false)
-                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            }
-                            context.startActivity(intent)
-                        } catch (e: Exception) {
-                            // ignore if alarm provider missing
-                        }
-                    },
+                    onClick = { launchReminder(context, event) },
                     shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.filledTonalButtonColors(containerColor = GeminiSurfaceElevated, contentColor = TextPrimary),
+                    colors = ButtonDefaults.filledTonalButtonColors(
+                        containerColor = GeminiSurfaceElevated,
+                        contentColor = TextPrimary,
+                        disabledContainerColor = GeminiSurfaceElevated.copy(alpha = 0.5f),
+                        disabledContentColor = TextMuted
+                    ),
                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
                     modifier = Modifier.height(34.dp)
                 ) {
@@ -213,6 +270,7 @@ fun ChittiCard(event: CapturedEvent, modifier: Modifier = Modifier, onDelete: ()
                     Text("Remind", style = MaterialTheme.typography.labelSmall)
                 }
             }
+
 
             // Smart Reply Output Card
             if (generatedReply != null) {
@@ -246,7 +304,11 @@ fun ChittiCard(event: CapturedEvent, modifier: Modifier = Modifier, onDelete: ()
                                         putExtra(Intent.EXTRA_TEXT, generatedReply)
                                         type = "text/plain"
                                     }
-                                    context.startActivity(Intent.createChooser(sendIntent, "Send Smart Reply"))
+                                    try {
+                                        context.startActivity(Intent.createChooser(sendIntent, "Send Smart Reply"))
+                                    } catch (e: ActivityNotFoundException) {
+                                        toast(context, "No app available to send the reply")
+                                    }
                                 }
                             ) {
                                 Text("Send via App", color = GeminiCyan, style = MaterialTheme.typography.labelSmall)

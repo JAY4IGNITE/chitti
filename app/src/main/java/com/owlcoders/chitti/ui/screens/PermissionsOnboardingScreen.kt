@@ -1,16 +1,20 @@
 package com.owlcoders.chitti.ui.screens
 
 import android.Manifest
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -22,11 +26,14 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.owlcoders.chitti.services.ChittiAccessibilityService
 import com.owlcoders.chitti.ui.theme.*
 
@@ -35,17 +42,42 @@ fun PermissionsOnboardingScreen(
     onAllPermissionsGranted: () -> Unit
 ) {
     val context = LocalContext.current
-    
+
     var hasMic by remember { mutableStateOf(checkMicPermission(context)) }
     var hasNotification by remember { mutableStateOf(checkNotificationPermission(context)) }
-    var hasAccessibility by remember { mutableStateOf(checkAccessibilityPermission()) }
-    // Autofill is optional but good to prompt, let's treat it as required for the full experience in this screen, 
-    // or just strongly recommended. For simplicity, we can make it a checklist.
+    var hasAccessibility by remember { mutableStateOf(checkAccessibilityPermission(context)) }
+    // Optional on this screen, but required on Android 13+ for reminders and LinkGuard alerts.
+    var hasPostNotifications by remember { mutableStateOf(checkPostNotificationsPermission(context)) }
+
+    fun refresh() {
+        hasMic = checkMicPermission(context)
+        hasNotification = checkNotificationPermission(context)
+        hasAccessibility = checkAccessibilityPermission(context)
+        hasPostNotifications = checkPostNotificationsPermission(context)
+    }
 
     val micLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
         hasMic = it
-        if (hasMic && hasNotification && hasAccessibility) {
-            onAllPermissionsGranted()
+    }
+    val postNotificationsLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        hasPostNotifications = it
+    }
+
+    // Notification-listener and accessibility grants happen in system Settings; re-check when we
+    // come back so the user does not have to press Refresh.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) refresh()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    // Ask for POST_NOTIFICATIONS once, right away, on Android 13+.
+    LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= 33 && !hasPostNotifications) {
+            postNotificationsLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
 
@@ -59,11 +91,12 @@ fun PermissionsOnboardingScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .verticalScroll(rememberScrollState())
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Spacer(modifier = Modifier.height(32.dp))
-            
+
             Box(
                 modifier = Modifier
                     .size(80.dp)
@@ -73,15 +106,17 @@ fun PermissionsOnboardingScreen(
             ) {
                 Icon(Icons.Filled.AutoAwesome, contentDescription = null, tint = Color.White, modifier = Modifier.size(40.dp))
             }
-            
+
             Spacer(modifier = Modifier.height(24.dp))
             Text("Welcome to Chitti", style = MaterialTheme.typography.headlineMedium, color = TextPrimary, fontWeight = FontWeight.Bold)
             Spacer(modifier = Modifier.height(8.dp))
-            Text("To act as your powerful AI assistant, Chitti needs the following permissions.", 
-                style = MaterialTheme.typography.bodyMedium, color = TextSecondary, textAlign = TextAlign.Center)
-            
+            Text(
+                "To act as your powerful AI assistant, Chitti needs the following permissions.",
+                style = MaterialTheme.typography.bodyMedium, color = TextSecondary, textAlign = TextAlign.Center
+            )
+
             Spacer(modifier = Modifier.height(32.dp))
-            
+
             PermissionItem(
                 title = "Microphone",
                 description = "To hear your voice commands.",
@@ -89,36 +124,38 @@ fun PermissionsOnboardingScreen(
                 isGranted = hasMic,
                 onClick = { micLauncher.launch(Manifest.permission.RECORD_AUDIO) }
             )
-            
+
             PermissionItem(
                 title = "Notification Access",
                 description = "To organize your tasks from incoming messages.",
                 icon = Icons.Filled.Notifications,
                 isGranted = hasNotification,
-                onClick = { 
-                    context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
-                }
+                onClick = { openSettingsSafely(context, Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS) }
             )
-            
+
             PermissionItem(
                 title = "Accessibility Service",
                 description = "To perform typing and clicks on your behalf.",
                 icon = Icons.Filled.Accessibility,
                 isGranted = hasAccessibility,
-                onClick = { 
-                    context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                }
+                onClick = { openSettingsSafely(context, Settings.ACTION_ACCESSIBILITY_SETTINGS) }
             )
 
-            Spacer(modifier = Modifier.weight(1f))
-            
+            if (Build.VERSION.SDK_INT >= 33) {
+                PermissionItem(
+                    title = "Show Notifications",
+                    description = "For reminders and suspicious-link alerts (optional).",
+                    icon = Icons.Filled.NotificationsActive,
+                    isGranted = hasPostNotifications,
+                    onClick = { postNotificationsLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) }
+                )
+            }
+
+            Spacer(modifier = Modifier.height(32.dp))
+
             Button(
-                onClick = { 
-                    // Re-check all permissions
-                    hasMic = checkMicPermission(context)
-                    hasNotification = checkNotificationPermission(context)
-                    hasAccessibility = checkAccessibilityPermission()
-                    
+                onClick = {
+                    refresh()
                     if (hasMic && hasNotification && hasAccessibility) {
                         onAllPermissionsGranted()
                     }
@@ -132,11 +169,23 @@ fun PermissionsOnboardingScreen(
                 Text("Refresh & Continue", fontSize = MaterialTheme.typography.titleMedium.fontSize)
             }
             Spacer(modifier = Modifier.height(16.dp))
-            
+
             // Allow bypassing for testing purposes
             TextButton(onClick = onAllPermissionsGranted) {
                 Text("Skip (Not Recommended)", color = TextMuted)
             }
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+    }
+}
+
+private fun openSettingsSafely(context: Context, action: String) {
+    try {
+        context.startActivity(Intent(action))
+    } catch (e: Exception) {
+        try {
+            context.startActivity(Intent(Settings.ACTION_SETTINGS))
+        } catch (_: Exception) {
         }
     }
 }
@@ -155,7 +204,7 @@ fun PermissionItem(
             .padding(vertical = 8.dp),
         shape = RoundedCornerShape(16.dp),
         color = GeminiSurfaceElevated,
-        border = androidx.compose.foundation.BorderStroke(1.dp, if (isGranted) GeminiGreen.copy(alpha=0.5f) else GeminiBorder)
+        border = androidx.compose.foundation.BorderStroke(1.dp, if (isGranted) GeminiGreen.copy(alpha = 0.5f) else GeminiBorder)
     ) {
         Row(
             modifier = Modifier
@@ -167,7 +216,7 @@ fun PermissionItem(
                 modifier = Modifier
                     .size(40.dp)
                     .clip(CircleShape)
-                    .background(if (isGranted) GeminiGreen.copy(alpha=0.2f) else GeminiCyan.copy(alpha=0.2f)),
+                    .background(if (isGranted) GeminiGreen.copy(alpha = 0.2f) else GeminiCyan.copy(alpha = 0.2f)),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(icon, contentDescription = null, tint = if (isGranted) GeminiGreen else GeminiCyan)
@@ -202,8 +251,28 @@ fun checkNotificationPermission(context: Context): Boolean {
     return packageNames.contains(context.packageName)
 }
 
-fun checkAccessibilityPermission(): Boolean {
-    // A reliable way to check if our specific service is enabled is simply to check the singleton.
-    // If it's connected, it's enabled.
-    return ChittiAccessibilityService.instance != null
+fun checkPostNotificationsPermission(context: Context): Boolean {
+    if (Build.VERSION.SDK_INT < 33) return true
+    return ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+}
+
+/**
+ * Reads the system setting instead of the service singleton: the singleton is null until the
+ * system (re)binds the service, which can lag app start by seconds (and ~11 s after a crash
+ * restart), which made onboarding reappear on every cold start.
+ */
+fun checkAccessibilityPermission(context: Context): Boolean {
+    val expected = ComponentName(context, ChittiAccessibilityService::class.java)
+    val enabled = try {
+        Settings.Secure.getString(context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
+    } catch (e: Exception) {
+        null
+    }.orEmpty()
+    val listed = enabled.split(':').any { entry ->
+        val parsed = ComponentName.unflattenFromString(entry)
+        (parsed != null && parsed == expected) ||
+            entry.equals(expected.flattenToString(), ignoreCase = true) ||
+            entry.equals(expected.flattenToShortString(), ignoreCase = true)
+    }
+    return listed || ChittiAccessibilityService.instance != null
 }

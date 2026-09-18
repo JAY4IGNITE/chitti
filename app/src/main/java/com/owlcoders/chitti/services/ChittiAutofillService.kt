@@ -27,7 +27,7 @@ class ChittiAutofillService : AutofillService() {
 
     private val job = SupervisorJob()
     private val scope = CoroutineScope(Dispatchers.IO + job)
-    
+
     private val TAG = "ChittiAutofill"
 
     override fun onFillRequest(
@@ -96,29 +96,42 @@ class ChittiAutofillService : AutofillService() {
     }
 
     private fun traverseNode(viewNode: AssistStructure.ViewNode, parsedFields: MutableMap<String, AutofillId>) {
-        if (viewNode.autofillHints != null && viewNode.autofillHints!!.isNotEmpty()) {
-            val hints = viewNode.autofillHints!!
+        val hints = viewNode.autofillHints
+        if (hints != null && hints.isNotEmpty()) {
             val id = viewNode.autofillId
             if (id != null) {
-                parsedFields[hints[0].lowercase()] = id
+                // Two fields with the same hint (e.g. "name" twice, or email + confirm email) must
+                // both be filled, so key by hint plus a unique suffix instead of overwriting.
+                var key = hints[0].lowercase()
+                var n = 1
+                while (parsedFields.containsKey(key)) {
+                    key = "${hints[0].lowercase()}#${n++}"
+                }
+                parsedFields[key] = id
             }
         }
-        
+
         for (i in 0 until viewNode.childCount) {
             val childNode: AssistStructure.ViewNode = viewNode.getChildAt(i)
             traverseNode(childNode, parsedFields)
         }
     }
 
-    private fun matchHintToProfile(hint: String, profile: UserProfile): String? {
+    private fun matchHintToProfile(rawHint: String, profile: UserProfile): String? {
+        val hint = rawHint.substringBefore('#') // strip the duplicate suffix added in traverseNode
+        fun String.orNull() = takeIf { it.isNotBlank() }
         return when {
-            hint.contains("name") && hint.contains("first") -> profile.firstName
-            hint.contains("name") && hint.contains("last") -> profile.lastName
-            hint.contains("name") -> "${profile.firstName} ${profile.lastName}".trim()
-            hint.contains("email") -> profile.email
-            hint.contains("phone") -> profile.phoneNumber
-            hint.contains("address") -> profile.address
-            hint.contains("birth") || hint.contains("dob") -> profile.dateOfBirth
+            // Credentials are never ours to fill.
+            hint.contains("username") || hint.contains("password") || hint.contains("otp") ||
+                hint.contains("securitycode") || hint.contains("verificationcode") || hint.contains("smscode") ||
+                hint.contains("postal") || hint.contains("zip") -> null // we hold no separate ZIP; never stuff the full address into it
+            hint.contains("given") || (hint.contains("name") && hint.contains("first")) -> profile.firstName.orNull()
+            hint.contains("family") || (hint.contains("name") && hint.contains("last")) -> profile.lastName.orNull()
+            hint.contains("name") -> "${profile.firstName} ${profile.lastName}".trim().orNull()
+            hint.contains("email") -> profile.email.orNull()
+            hint.contains("phone") || hint.contains("tel") -> profile.phoneNumber.orNull()
+            hint.contains("address") || hint.contains("street") -> profile.address.orNull()
+            hint.contains("birth") || hint.contains("dob") -> profile.dateOfBirth.orNull()
             else -> null
         }
     }
@@ -126,7 +139,7 @@ class ChittiAutofillService : AutofillService() {
     override fun onSaveRequest(request: SaveRequest, callback: SaveCallback) {
         callback.onSuccess()
     }
-    
+
     override fun onDestroy() {
         super.onDestroy()
         job.cancel()

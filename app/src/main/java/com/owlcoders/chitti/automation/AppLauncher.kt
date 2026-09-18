@@ -77,7 +77,11 @@ class AppLauncher(private val context: Context) {
         }
 
         // 2. Direct package lookup
-        val matchingKey = commonPackages.keys.find { cleanQuery == it || cleanQuery.contains(it) }
+        // Whole-word matching only: substring matching sent "open excel" to X/Twitter ("x")
+        // and "open my tutorials" to YouTube ("yt").
+        val matchingKey = commonPackages.keys.find { key ->
+            cleanQuery == key || Regex("(^|\\s)" + Regex.escape(key) + "(\\s|$)").containsMatchIn(cleanQuery)
+        }
         if (matchingKey != null) {
             val candidatePkgs = commonPackages[matchingKey] ?: emptyList()
             for (pkg in candidatePkgs) {
@@ -126,10 +130,14 @@ class AppLauncher(private val context: Context) {
                 }
             }
 
-            // Partial label match
+            // Partial label match: the query must be a whole word (or word prefix) of the label,
+            // and short labels must appear as a whole word in the query.
+            if (cleanQuery.length < 3) return AppLaunchResult(false, "App \"$cleanQuery\" not found on your phone.")
             for (resolveInfo in pkgAppsList) {
-                val label = resolveInfo.loadLabel(context.packageManager).toString()
-                if (label.lowercase().contains(cleanQuery) || cleanQuery.contains(label.lowercase())) {
+                val label = resolveInfo.loadLabel(context.packageManager).toString().lowercase()
+                val queryInLabel = Regex("(^|\\s)" + Regex.escape(cleanQuery)).containsMatchIn(label)
+                val labelInQuery = label.length >= 3 && Regex("(^|\\s)" + Regex.escape(label) + "(\\s|$)").containsMatchIn(cleanQuery)
+                if (queryInLabel || labelInQuery) {
                     val launchIntent = context.packageManager.getLaunchIntentForPackage(resolveInfo.activityInfo.packageName)
                     if (launchIntent != null) {
                         launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)

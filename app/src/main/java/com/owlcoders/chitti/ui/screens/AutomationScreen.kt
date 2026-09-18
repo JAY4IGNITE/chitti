@@ -15,6 +15,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.owlcoders.chitti.db.entities.AutomationHistory
+import com.owlcoders.chitti.ui.theme.LightScreenBg
+import com.owlcoders.chitti.ui.theme.LightScreenInk
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -24,10 +26,12 @@ fun AutomationScreen(
 ) {
     val dateFormat = remember { SimpleDateFormat("MMM dd, HH:mm:ss", Locale.getDefault()) }
 
+    // Light screen: dark content colour so uncoloured Text/Icon read on white cards.
+    CompositionLocalProvider(LocalContentColor provides LightScreenInk) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFFF5F5F5))
+            .background(LightScreenBg)
     ) {
         // Header
         Box(
@@ -105,11 +109,12 @@ fun AutomationScreen(
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(history) { item ->
+                items(history, key = { it.id }) { item ->
                     AutomationHistoryCard(item, dateFormat)
                 }
             }
         }
+    }
     }
 }
 

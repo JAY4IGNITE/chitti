@@ -1,11 +1,19 @@
 package com.owlcoders.chitti.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.slideInVertically
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -27,7 +35,12 @@ import com.owlcoders.chitti.db.CapturedEvent
 import com.owlcoders.chitti.db.entities.ChatHistoryEntity
 import com.owlcoders.chitti.db.entities.Memory
 import com.owlcoders.chitti.services.TtsEngine
-import com.owlcoders.chitti.ui.components.GeminiCircularProgressIndicator
+import com.owlcoders.chitti.ui.components.ChittiMotion
+import com.owlcoders.chitti.ui.components.LatticeLoader
+import com.owlcoders.chitti.ui.components.pressScale
+import com.owlcoders.chitti.ui.components.rememberReducedMotion
+import com.owlcoders.chitti.ui.components.LatticePatterns
+import com.owlcoders.chitti.ui.components.LatticeStatus
 import com.owlcoders.chitti.ui.theme.*
 import kotlinx.coroutines.launch
 
@@ -37,6 +50,7 @@ data class ChatMessage(
     val actionLabel: String? = null
 )
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ChatBotScreen(
     events: List<CapturedEvent>,
@@ -50,19 +64,33 @@ fun ChatBotScreen(
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
 
+    val greeting = remember {
+        ChatMessage(
+            "Hey! I'm Chitti, your mobile AI assistant ✨ I can open apps (like WhatsApp or YouTube), set reminders, manage tasks, or answer anything. Try asking me!",
+            false
+        )
+    }
+
     var messages by remember {
         mutableStateOf(
             if (chatHistory.isNotEmpty()) {
                 chatHistory.map { ChatMessage(it.message, it.role == "user") }
             } else {
-                listOf(
-                    ChatMessage(
-                        "Hey! I'm Chitti, your mobile AI assistant ✨ I can open apps (like WhatsApp or YouTube), find documents, manage tasks, or answer anything. Try asking me!",
-                        false
-                    )
-                )
+                listOf(greeting)
             }
         )
+    }
+
+    // `chatHistory` comes from collectAsState(initial = emptyList()), so the first
+    // composition may see an empty list and fall back to the greeting. Hydrate once
+    // when the persisted history actually arrives, but never after the user has
+    // started a conversation locally (that would drop/duplicate in-flight messages).
+    var hydratedFromHistory by remember { mutableStateOf(chatHistory.isNotEmpty()) }
+    LaunchedEffect(chatHistory) {
+        if (!hydratedFromHistory && chatHistory.isNotEmpty() && messages.none { it.isUser }) {
+            messages = chatHistory.map { ChatMessage(it.message, it.role == "user") }
+            hydratedFromHistory = true
+        }
     }
 
     var inputText by remember { mutableStateOf("") }
@@ -78,20 +106,26 @@ fun ChatBotScreen(
         if (queryText.isBlank() || isThinking) return
         val query = queryText.trim()
         inputText = ""
+        hydratedFromHistory = true // local conversation is now the source of truth
         messages = messages + ChatMessage(query, true)
         isThinking = true
         onSaveMessage(ChatHistoryEntity(role = "user", message = query))
 
         scope.launch {
-            if (dispatcher != null) {
-                val response = dispatcher.processQuery(query, events, shouldSpeak = true)
-                messages = messages + ChatMessage(response.message, false, response.actionLabel)
-                onSaveMessage(ChatHistoryEntity(role = "assistant", message = response.message))
-            } else {
-                val reply = "Assistant is currently initializing."
-                messages = messages + ChatMessage(reply, false)
+            try {
+                if (dispatcher != null) {
+                    val response = dispatcher.processQuery(query, events, shouldSpeak = true)
+                    messages = messages + ChatMessage(response.message, false, response.actionLabel)
+                    onSaveMessage(ChatHistoryEntity(role = "assistant", message = response.message))
+                } else {
+                    val reply = "Assistant is currently initializing."
+                    messages = messages + ChatMessage(reply, false)
+                }
+            } catch (e: Exception) {
+                messages = messages + ChatMessage("Sorry, something went wrong: ${e.message ?: "unknown error"}", false)
+            } finally {
+                isThinking = false
             }
-            isThinking = false
         }
     }
 
@@ -148,35 +182,44 @@ fun ChatBotScreen(
             contentPadding = PaddingValues(vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            items(messages) { msg ->
-                GeminiChatBubble(
-                    msg = msg,
-                    onSpeak = {
-                        ttsEngine?.speak(msg.text)
-                    }
-                )
+            // The list only ever appends, so the index is a stable key; animateItemPlacement keeps
+            // existing bubbles gliding up when the thinking row appears/disappears.
+            itemsIndexed(messages, key = { index, _ -> index }) { _, msg ->
+                Box(modifier = Modifier.animateItemPlacement(ChittiMotion.settle())) {
+                    GeminiChatBubble(
+                        msg = msg,
+                        onSpeak = {
+                            ttsEngine?.speak(msg.text)
+                        }
+                    )
+                }
             }
 
             if (isThinking) {
-                item {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(8.dp)
-                    ) {
-                        GeminiCircularProgressIndicator(modifier = Modifier.size(20.dp))
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Text("Chitti is thinking...", style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
-                    }
+                item(key = "lattice-thinking") {
+                    LatticeLoader(
+                        status = LatticeStatus.WORKING,
+                        label = "Thinking",
+                        pattern = LatticePatterns.Orbit,
+                        color = GeminiCyan,
+                        glow = true,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
+                    )
                 }
             }
         }
 
-        // Input Bar Area
+        // Input Bar Area: a floating material with a light-catching top edge instead of a hard divider
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(Brush.horizontalGradient(listOf(Color.Transparent, GeminiCyan.copy(alpha = 0.35f), Color.Transparent)))
+        )
         Surface(
             modifier = Modifier.fillMaxWidth(),
-            color = GeminiSurface,
-            tonalElevation = 8.dp,
-            border = androidx.compose.foundation.BorderStroke(1.dp, GeminiBorder)
+            color = GeminiSurface.copy(alpha = 0.96f),
+            tonalElevation = 8.dp
         ) {
             Row(
                 modifier = Modifier
@@ -185,10 +228,13 @@ fun ChatBotScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 // Mic Button
+                val micInteraction = remember { MutableInteractionSource() }
                 IconButton(
                     onClick = onStartVoice,
+                    interactionSource = micInteraction,
                     modifier = Modifier
                         .size(42.dp)
+                        .pressScale(micInteraction, pressed = 0.9f)
                         .clip(CircleShape)
                         .background(GeminiSurfaceElevated)
                         .border(1.dp, GeminiBorder, CircleShape)
@@ -219,9 +265,13 @@ fun ChatBotScreen(
                 Spacer(modifier = Modifier.width(8.dp))
 
                 // Send Button
+                val sendInteraction = remember { MutableInteractionSource() }
                 FilledIconButton(
                     onClick = { sendMessage(inputText) },
-                    modifier = Modifier.size(42.dp),
+                    interactionSource = sendInteraction,
+                    modifier = Modifier
+                        .size(42.dp)
+                        .pressScale(sendInteraction, pressed = 0.9f),
                     colors = IconButtonDefaults.filledIconButtonColors(containerColor = GeminiBlue),
                     enabled = inputText.isNotBlank() && !isThinking
                 ) {
@@ -241,10 +291,20 @@ fun GeminiChatBubble(
     val bgColor = if (msg.isUser) GeminiBlue else GeminiSurfaceElevated
     val textColor = TextPrimary
 
+    // Materialise from where it belongs: a short rise + fade + scale on a settle spring.
+    val reduceMotion = rememberReducedMotion()
+    val shown = remember { MutableTransitionState(reduceMotion).apply { targetState = true } }
+
     Box(
         modifier = Modifier.fillMaxWidth(),
         contentAlignment = alignment
     ) {
+        AnimatedVisibility(
+            visibleState = shown,
+            enter = fadeIn(tween(160)) +
+                slideInVertically(ChittiMotion.settle()) { it / 4 } +
+                scaleIn(ChittiMotion.Settle, initialScale = 0.96f)
+        ) {
         Surface(
             shape = RoundedCornerShape(
                 topStart = 18.dp,
@@ -287,6 +347,7 @@ fun GeminiChatBubble(
                     }
                 }
             }
+        }
         }
     }
 }

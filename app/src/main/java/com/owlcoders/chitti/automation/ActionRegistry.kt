@@ -24,13 +24,15 @@ enum class ActionId(
     CREATE_REMINDER(
         "Create Reminder",
         "Create a reminder via AlarmManager",
-        requiredPermissions = listOf(Manifest.permission.SCHEDULE_EXACT_ALARM),
+        // SCHEDULE_EXACT_ALARM is a special app-op, not a runtime permission: checkSelfPermission()
+        // reports it denied, which blocked every reminder. The executor falls back to an inexact
+        // alarm when exact alarms are not allowed.
         needsConfirmation = true
     ),
     CREATE_CALENDAR_EVENT(
         "Add to Calendar",
         "Insert event into CalendarContract.Events",
-        requiredPermissions = listOf(Manifest.permission.WRITE_CALENDAR),
+        // Uses ACTION_INSERT (the calendar app writes the row), so WRITE_CALENDAR is not needed.
         needsConfirmation = true
     ),
     DRAFT_MESSAGE(
@@ -47,11 +49,6 @@ enum class ActionId(
         "Share Text",
         "Share plain text via chooser",
     ),
-    SEARCH_FILES(
-        "Search Files",
-        "Query local documents + file system",
-        requiredPermissions = listOf(Manifest.permission.READ_EXTERNAL_STORAGE),
-    ),
     OPEN_SETTINGS(
         "Open Settings",
         "Launch Android Settings",
@@ -59,16 +56,12 @@ enum class ActionId(
     TOGGLE_FLASHLIGHT(
         "Toggle Flashlight",
         "Turn camera flash on/off",
-        requiredPermissions = listOf(Manifest.permission.CAMERA),
+        // CameraManager.setTorchMode() needs no permission.
     ),
     START_VOICE_INPUT(
         "Voice Input",
         "Launch STT UI",
         requiredPermissions = listOf(Manifest.permission.RECORD_AUDIO),
-    ),
-    SHOW_OCR_RESULTS(
-        "Show OCR",
-        "Display OCR-extracted text in a dialog",
     ),
     SET_PRIORITY(
         "Set Priority",
@@ -99,10 +92,6 @@ enum class ActionId(
         "Launch Camera",
         "Open camera for picture capture",
         requiredPermissions = listOf(Manifest.permission.CAMERA),
-    ),
-    LAUNCH_FILE_PICKER(
-        "Pick File",
-        "Open SAF to pick a file",
     );
 
     companion object {

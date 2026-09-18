@@ -14,6 +14,8 @@ import com.owlcoders.chitti.security.LinkGuardActivity
 import com.owlcoders.chitti.security.LinkScanner
 import com.owlcoders.chitti.db.entities.AutomationHistory
 import com.owlcoders.chitti.db.entities.Memory
+import com.owlcoders.chitti.db.entities.Reminder
+import com.owlcoders.chitti.db.entities.Task
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -69,11 +71,9 @@ class ActionExecutor(
                 )
                 ActionId.SEND_MESSAGE -> ActionResult(false, "Direct SMS sending disabled for safety")
                 ActionId.SHARE_TEXT -> shareText(params["text"] ?: "")
-                ActionId.SEARCH_FILES -> searchFiles(params["query"] ?: "")
                 ActionId.OPEN_SETTINGS -> openSettings()
                 ActionId.TOGGLE_FLASHLIGHT -> toggleFlashlight()
                 ActionId.START_VOICE_INPUT -> ActionResult(true, "Voice input started")
-                ActionId.SHOW_OCR_RESULTS -> ActionResult(true, "OCR results: ${params["text"] ?: ""}")
                 ActionId.SET_PRIORITY -> setPriority(
                     params["taskId"]?.toIntOrNull() ?: 0,
                     params["priority"]?.toIntOrNull() ?: 0
@@ -91,7 +91,6 @@ class ActionExecutor(
                 )
                 ActionId.QUERY_MEMORY -> queryMemory(params["query"] ?: "")
                 ActionId.LAUNCH_CAMERA -> launchCamera()
-                ActionId.LAUNCH_FILE_PICKER -> launchFilePicker()
             }
         } catch (e: Exception) {
             Log.e(tag, "Action execution failed: ${e.message}", e)
@@ -127,35 +126,24 @@ class ActionExecutor(
         }
     }
 
-    private fun createReminder(title: String, triggerTime: Long): ActionResult {
-        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        // Explicit intent: implicit broadcasts to a non-exported receiver are not delivered
-        // on Android 8+, which silently broke reminders.
-        val intent = Intent(context, ReminderReceiver::class.java).apply {
-            action = "com.owlcoders.chitti.REMINDER"
-            putExtra("title", title)
+    private suspend fun createReminder(title: String, triggerTime: Long): ActionResult {
+        if (triggerTime <= System.currentTimeMillis()) {
+            return ActionResult(false, "That time is already in the past.")
         }
-        // Unique request code per (title, time): two reminders with the same title no
-        // longer overwrite each other's PendingIntent.
-        val requestCode = (title.hashCode() * 31) + (triggerTime and 0x7FFFFFFF).toInt()
-        val pendingIntent = PendingIntent.getBroadcast(
-            context,
-            requestCode,
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        // SCHEDULE_EXACT_ALARM can be revoked by the user on Android 12+; fall back to an
-        // inexact alarm instead of crashing with SecurityException.
-        try {
-            if (android.os.Build.VERSION.SDK_INT >= 31 && !alarmManager.canScheduleExactAlarms()) {
-                alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent)
-                return ActionResult(true, "Reminder set (inexact — exact alarms not permitted): $title")
-            }
-            alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent)
-        } catch (e: SecurityException) {
-            alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent)
-        }
-        return ActionResult(true, "Reminder set: $title")
+        // Persist first so BootReceiver can re-schedule after a reboot (alarms do not survive one).
+        val taskId = database.taskDao().insertTask(
+            Task(
+                title = title,
+                description = "Reminder set via Chitti",
+                status = "pending",
+                priority = 1,
+                sourceType = "voice"
+            )
+        ).toInt()
+        database.reminderDao().insertReminder(Reminder(taskId = taskId, triggerTime = triggerTime))
+
+        val exact = ReminderScheduler.schedule(context, taskId, title, triggerTime)
+        return ActionResult(true, if (exact) "Reminder set: $title" else "Reminder set (inexact, exact alarms not permitted): $title")
     }
 
     private fun createCalendarEvent(
@@ -201,14 +189,6 @@ class ActionExecutor(
         return ActionResult(true, "Sharing text")
     }
 
-    private suspend fun searchFiles(query: String): ActionResult {
-        val documents = withContext(Dispatchers.IO) {
-            // Search in local documents table
-            database.documentDao().getDocumentCount()
-        }
-        return ActionResult(true, "Found $documents documents (search: $query)")
-    }
-
     private fun openSettings(): ActionResult {
         val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
             data = Uri.parse("package:${context.packageName}")
@@ -240,6 +220,8 @@ class ActionExecutor(
     private suspend fun markDone(taskId: Int): ActionResult {
         withContext(Dispatchers.IO) {
             database.taskDao().markDone(taskId)
+            ReminderScheduler.cancel(context, taskId, "")
+            database.reminderDao().deleteByTaskId(taskId)
         }
         return ActionResult(true, "Task $taskId marked as done")
     }
@@ -251,6 +233,8 @@ class ActionExecutor(
 
     private suspend fun deleteTask(taskId: Int): ActionResult {
         withContext(Dispatchers.IO) {
+            ReminderScheduler.cancel(context, taskId, "")
+            database.reminderDao().deleteByTaskId(taskId)
             database.taskDao().deleteTaskById(taskId)
         }
         return ActionResult(true, "Task $taskId deleted")
@@ -274,21 +258,32 @@ class ActionExecutor(
     }
 
     private fun launchCamera(): ActionResult {
+        // CAMERA is declared in our manifest, so the system refuses ACTION_IMAGE_CAPTURE with a
+        // SecurityException unless the runtime permission is actually granted.
+        val granted = androidx.core.content.ContextCompat.checkSelfPermission(
+            context, android.Manifest.permission.CAMERA
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (!granted) {
+            return ActionResult(false, "Camera permission is not granted. Enable it in Settings and try again.")
+        }
         val intent = Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
-        context.startActivity(intent)
-        return ActionResult(true, "Camera launched")
+        return try {
+            context.startActivity(intent)
+            ActionResult(true, "Camera launched")
+        } catch (e: Exception) {
+            Log.w(tag, "Camera launch failed: ${e.message}")
+            ActionResult(false, "Could not open the camera: ${e.message}")
+        }
     }
 
-    private fun launchFilePicker(): ActionResult {
-        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-            addCategory(Intent.CATEGORY_OPENABLE)
-            type = "*/*"
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        context.startActivity(intent)
-        return ActionResult(true, "File picker opened")
+    /**
+     * Records an action that was executed elsewhere (app launch, flashlight, file search from the
+     * dispatcher) so it appears in the automation audit log.
+     */
+    suspend fun recordExternal(action: ActionId, params: Map<String, String>, success: Boolean, message: String) {
+        logAction(action, params, ActionResult(success, message), userConfirmed = true)
     }
 
     private suspend fun logAction(action: ActionId, params: Map<String, String>, result: ActionResult, userConfirmed: Boolean) {

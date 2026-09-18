@@ -67,9 +67,6 @@ dependencies {
     // MediaPipe LLM Inference
     implementation("com.google.mediapipe:tasks-genai:0.10.14")
 
-    // ML Kit Text Recognition (Vision)
-    implementation("com.google.android.gms:play-services-mlkit-text-recognition:19.0.0")
-
-    // ONNX Runtime for Silero VAD
-    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.17.1")
+    // Unit tests (app/src/test)
+    testImplementation("junit:junit:4.13.2")
 }

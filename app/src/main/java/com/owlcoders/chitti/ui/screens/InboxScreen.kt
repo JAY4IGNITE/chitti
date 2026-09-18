@@ -18,6 +18,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.owlcoders.chitti.db.entities.NotificationEntity
+import com.owlcoders.chitti.ui.theme.LightScreenBg
+import com.owlcoders.chitti.ui.theme.LightScreenInk
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -37,10 +39,13 @@ fun InboxScreen(
         else -> notifications
     }
 
+    // Light screen: provide a dark content colour so Text/Icon without an explicit
+    // colour are readable on the white cards (the theme's onSurface is near-white).
+    CompositionLocalProvider(LocalContentColor provides LightScreenInk) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFFF5F5F5))
+            .background(LightScreenBg)
     ) {
         // Header
         Box(
@@ -73,19 +78,25 @@ fun InboxScreen(
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+            // Unselected chip labels default to onSurfaceVariant (light grey) which is
+            // faint on the light background; use the light-screen ink instead.
+            val chipColors = FilterChipDefaults.filterChipColors(labelColor = LightScreenInk)
             FilterChip(
                 selected = selectedFilter == "all",
                 onClick = { selectedFilter = "all" },
+                colors = chipColors,
                 label = { Text("All") }
             )
             FilterChip(
                 selected = selectedFilter == "unprocessed",
                 onClick = { selectedFilter = "unprocessed" },
+                colors = chipColors,
                 label = { Text("Unprocessed") }
             )
             FilterChip(
                 selected = selectedFilter == "processed",
                 onClick = { selectedFilter = "processed" },
+                colors = chipColors,
                 label = { Text("Processed") }
             )
         }
@@ -111,7 +122,10 @@ fun InboxScreen(
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(filteredNotifications) { notification ->
+                // Stable keys: NotificationCard keeps local `expanded` state, so
+                // without keys that state would jump to whichever item slides into
+                // the same position after a delete / filter change.
+                items(filteredNotifications, key = { it.id }) { notification ->
                     NotificationCard(
                         notification = notification,
                         dateFormat = dateFormat,
@@ -121,6 +135,7 @@ fun InboxScreen(
                 }
             }
         }
+    }
     }
 }
 

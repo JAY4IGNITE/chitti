@@ -85,5 +85,97 @@ class LinkScannerTest {
         assertEquals("google.com", LinkScanner.registrableDomain("mail.google.com"))
         assertEquals("sbi.co.in", LinkScanner.registrableDomain("portal.sbi.co.in"))
         assertEquals("uidai.gov.in", LinkScanner.registrableDomain("resident.uidai.gov.in"))
+        assertEquals("iitm.ac.in", LinkScanner.registrableDomain("www.iitm.ac.in"))
+        assertEquals("bbc.co.uk", LinkScanner.registrableDomain("news.bbc.co.uk"))
+        assertEquals("globo.com.br", LinkScanner.registrableDomain("g1.globo.com.br"))
+    }
+
+    // ---- F42: multi-part suffixes ----
+
+    @Test
+    fun multiPartSuffixBrandDomainsAreSafe() {
+        assertEquals(RiskLevel.SAFE, LinkScanner.scan("https://www.google.co.in/search?q=x").level)
+        assertEquals(RiskLevel.SAFE, LinkScanner.scan("https://www.amazon.co.uk/dp/B0TEST").level)
+        // Not in the trusted list, but the brand label is the registrable owner, so no subdomain-abuse hit.
+        assertEquals(RiskLevel.SAFE, LinkScanner.scan("https://www.microsoft.co.in/").level)
+    }
+
+    @Test
+    fun typosquatUnderMultiPartSuffixIsCaught() {
+        val verdict = LinkScanner.scan("https://sbl.co.in/kyc")
+        assertEquals(RiskLevel.DANGER, verdict.level)
+        assertTrue(verdict.reasons.any { it.contains("sbi") })
+    }
+
+    @Test
+    fun brandBuriedUnderMultiPartSuffixIsCaught() {
+        val verdict = LinkScanner.scan("https://paytm.evil.co.in/login")
+        assertTrue(verdict.level != RiskLevel.SAFE)
+        assertTrue(verdict.reasons.any { it.contains("paytm") })
+    }
+
+    // ---- F43: unicode homograph ----
+
+    @Test
+    fun unicodeHomographIsDanger() {
+        // Cyrillic 'а' (U+0430) imitating apple.com — java.net.URI cannot parse this host
+        val verdict = LinkScanner.scan("https://аpple.com/login")
+        assertEquals(RiskLevel.DANGER, verdict.level)
+        assertEquals("xn--pple-43d.com", verdict.host)
+        // Original text is preserved for display
+        assertEquals("https://аpple.com/login", verdict.url)
+    }
+
+    @Test
+    fun unicodeHomographKeepsOtherSignals() {
+        val withPort = LinkScanner.scan("https://аpple.com:8080/login?q=1#f")
+        assertTrue(withPort.reasons.any { it.contains("8080") })
+        val withUserInfo = LinkScanner.scan("https://sbi.co.in@аpple.com/verify")
+        assertEquals(RiskLevel.DANGER, withUserInfo.level)
+        assertTrue(withUserInfo.reasons.any { it.contains("'@' trick") })
+    }
+
+    // ---- F44: short-brand typosquat false positives ----
+
+    @Test
+    fun shortWordsNearShortBrandsAreNotTyposquats() {
+        assertEquals(RiskLevel.SAFE, LinkScanner.scan("https://bio.link/abc").level)
+        assertEquals(RiskLevel.SAFE, LinkScanner.scan("https://bio.site/x").level)
+        assertEquals(RiskLevel.SAFE, LinkScanner.scan("https://rio.com/").level)
+        assertEquals(RiskLevel.SAFE, LinkScanner.scan("https://pay.example.com/").level)
+        // genuine short-brand typosquats still fire
+        assertTrue(LinkScanner.scan("https://jlo.com/recharge").score >= 45)
+        assertTrue(LinkScanner.scan("https://sbl.co.in/login").score >= 45)
+    }
+
+    @Test
+    fun brandPaddedWithDigitsOrHyphensIsTyposquat() {
+        assertTrue(LinkScanner.scan("https://pay-tm.com/offer").score >= 45)
+        assertTrue(LinkScanner.scan("https://sbi123.in/").score >= 45)
+        assertTrue(LinkScanner.scan("https://phone-pe.co.in/").score >= 45)
+    }
+
+    // ---- F46: UPI links that java.net.URI rejects ----
+
+    @Test
+    fun upiLinkWithUnencodedSpaceStillGetsUpiChecks() {
+        assertEquals(RiskLevel.DANGER, LinkScanner.scan("upi://pay?pn=Shop Name&am=9999").level)
+        val ok = LinkScanner.scan("upi://pay?pa=merchant@okaxis&pn=Shop Name&am=100")
+        assertEquals("merchant@okaxis", ok.host)
+        assertEquals(RiskLevel.CAUTION, ok.level)
+    }
+
+    @Test
+    fun upiPercentEncodedPayeeIsNotMalformed() {
+        val verdict = LinkScanner.scan("upi://pay?pa=merchant%40okaxis&pn=Shop&am=100")
+        assertEquals("merchant@okaxis", verdict.host)
+        assertTrue(verdict.reasons.none { it.contains("malformed") })
+    }
+
+    @Test
+    fun garbagePrefixIsNotTreatedAsScheme() {
+        // "ht!tp" is not a valid scheme, so the fallback must not invent one
+        assertEquals(RiskLevel.CAUTION, LinkScanner.scan("ht!tp://???").level)
+        assertEquals("", LinkScanner.scan("ht!tp://???").host)
     }
 }

@@ -1,9 +1,12 @@
 package com.owlcoders.chitti.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -15,6 +18,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.owlcoders.chitti.db.entities.Memory
+import com.owlcoders.chitti.ui.theme.LightScreenBg
+import com.owlcoders.chitti.ui.theme.LightScreenInk
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -41,10 +46,12 @@ fun MemoryScreen(
         matchesCategory && matchesSearch
     }
 
+    // Light screen: dark content colour so uncoloured Text/Icon read on white cards.
+    CompositionLocalProvider(LocalContentColor provides LightScreenInk) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFFF5F5F5))
+            .background(LightScreenBg)
     ) {
         // Header
         Box(
@@ -81,24 +88,36 @@ fun MemoryScreen(
             leadingIcon = { Icon(Icons.Filled.Search, contentDescription = "Search") },
             colors = OutlinedTextFieldDefaults.colors(
                 focusedContainerColor = Color.White,
-                unfocusedContainerColor = Color.White
+                unfocusedContainerColor = Color.White,
+                // The dark scheme's onSurface is near-white; on a white container
+                // typed text and the cursor would be invisible without these.
+                focusedTextColor = LightScreenInk,
+                unfocusedTextColor = LightScreenInk,
+                cursorColor = LightScreenInk,
+                focusedPlaceholderColor = Color.Gray,
+                unfocusedPlaceholderColor = Color.Gray,
+                focusedLeadingIconColor = Color.Gray,
+                unfocusedLeadingIconColor = Color.Gray,
+                focusedBorderColor = Color(0xFFAD1457),
+                unfocusedBorderColor = Color(0xFFBDBDBD)
             ),
             shape = RoundedCornerShape(12.dp),
             singleLine = true
         )
 
         // Category filter
-        val allCategories = listOf("all") + categories
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp),
+        val allCategories = (listOf("all") + categories).distinct()
+        // Horizontally scrollable so every category stays reachable on narrow screens.
+        LazyRow(
+            modifier = Modifier.fillMaxWidth(),
+            contentPadding = PaddingValues(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            allCategories.forEach { category ->
+            items(allCategories, key = { it }) { category ->
                 FilterChip(
                     selected = selectedCategory == category,
                     onClick = { selectedCategory = category },
+                    colors = FilterChipDefaults.filterChipColors(labelColor = LightScreenInk, iconColor = LightScreenInk),
                     label = { Text(if (category == "all") "All" else category.replaceFirstChar { it.uppercase() }) },
                     leadingIcon = if (selectedCategory == category) {
                         { Icon(Icons.Filled.Done, contentDescription = null, modifier = Modifier.size(16.dp)) }
@@ -147,7 +166,7 @@ fun MemoryScreen(
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(filteredMemories) { memory ->
+                items(filteredMemories, key = { it.id }) { memory ->
                     MemoryCard(
                         memory = memory,
                         dateFormat = dateFormat,
@@ -157,6 +176,7 @@ fun MemoryScreen(
                 }
             }
         }
+    }
     }
 
     // Add / Edit Memory Dialog
@@ -292,9 +312,11 @@ fun AddMemoryDialog(
                 Text("Category:", style = MaterialTheme.typography.labelMedium)
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    modifier = Modifier.padding(top = 4.dp)
+                    modifier = Modifier
+                        .horizontalScroll(rememberScrollState())
+                        .padding(top = 4.dp)
                 ) {
-                    allCategories.take(4).forEach { cat ->
+                    allCategories.forEach { cat ->
                         FilterChip(
                             selected = category == cat,
                             onClick = { category = cat },

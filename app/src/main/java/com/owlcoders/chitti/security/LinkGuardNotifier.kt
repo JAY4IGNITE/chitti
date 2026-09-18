@@ -8,7 +8,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 
 /**
@@ -18,14 +20,24 @@ import androidx.core.content.ContextCompat
  */
 object LinkGuardNotifier {
 
+    private const val TAG = "LinkGuardNotifier"
     private const val CHANNEL_ID = "chitti_linkguard"
 
     fun showDangerAlert(context: Context, url: String, verdict: LinkScanner.LinkVerdict) {
-        // API 33+: posting without POST_NOTIFICATIONS throws SecurityException
+        // API 33+: posting without POST_NOTIFICATIONS throws SecurityException. The runtime
+        // request lives in onboarding; here we only guard and explain why nothing was shown.
         if (Build.VERSION.SDK_INT >= 33 &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
             != PackageManager.PERMISSION_GRANTED
-        ) return
+        ) {
+            Log.w(TAG, "POST_NOTIFICATIONS not granted; dropping LinkGuard alert for $url")
+            return
+        }
+        // Notifications may also be disabled for the app (or this channel) in system settings.
+        if (!NotificationManagerCompat.from(context).areNotificationsEnabled()) {
+            Log.w(TAG, "Notifications disabled for the app; dropping LinkGuard alert for $url")
+            return
+        }
 
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.createNotificationChannel(
@@ -60,6 +72,11 @@ object LinkGuardNotifier {
             .setAutoCancel(true)
             .build()
 
-        manager.notify(url.hashCode(), notification)
+        try {
+            manager.notify(url.hashCode(), notification)
+        } catch (e: SecurityException) {
+            // Permission revoked between the check and the post; never crash the listener service.
+            Log.w(TAG, "Could not post LinkGuard alert", e)
+        }
     }
 }

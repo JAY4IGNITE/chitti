@@ -16,14 +16,13 @@ import com.owlcoders.chitti.db.entities.*
         Commitment::class,
         CalendarEvent::class,
         NotificationEntity::class,
-        Document::class,
         Memory::class,
         Person::class,
         AutomationHistory::class,
         ChatHistoryEntity::class,
         UserProfile::class
     ],
-    version = 4,
+    version = 5, // 5: documents table removed with the file finder feature
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -34,11 +33,11 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun taskDao(): TaskDao
     abstract fun memoryDao(): MemoryDao
     abstract fun notificationDao(): NotificationDao
-    abstract fun documentDao(): DocumentDao
     abstract fun personDao(): PersonDao
     abstract fun automationHistoryDao(): AutomationHistoryDao
     abstract fun chatHistoryDao(): ChatHistoryDao
     abstract fun userProfileDao(): UserProfileDao
+    abstract fun reminderDao(): ReminderDao
 
     companion object {
         @Volatile

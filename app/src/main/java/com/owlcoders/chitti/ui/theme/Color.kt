@@ -24,6 +24,12 @@ val TextPrimary = Color(0xFFF8FAFC)
 val TextSecondary = Color(0xFF94A3B8)
 val TextMuted = Color(0xFF64748B)
 
+// Content colour for the light (0xFFF5F5F5 / white-card) utility screens.
+// Provided via LocalContentColor at each light screen root so Text/Icon without
+// an explicit colour render dark instead of the dark-scheme onSurface.
+val LightScreenInk = Color(0xFF1F1F1F)
+val LightScreenBg = Color(0xFFF5F5F5)
+
 // Gradients
 val GeminiGradient = Brush.horizontalGradient(
     colors = listOf(GeminiBlue, GeminiPurple, GeminiPink, GeminiCyan)

@@ -12,9 +12,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.owlcoders.chitti.db.AppDatabase
 import com.owlcoders.chitti.db.entities.UserProfile
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -33,19 +32,26 @@ fun ProfileScreen() {
     var isLoading by remember { mutableStateOf(true) }
     var showSavedMessage by remember { mutableStateOf(false) }
 
-    // Load initial profile data
+    // Load initial profile data. getUserProfileSync() is a suspend DAO call, so Room
+    // already runs it on its own executor; the Compose state writes stay on Main.
     LaunchedEffect(Unit) {
-        withContext(Dispatchers.IO) {
-            val profile = db.userProfileDao().getUserProfileSync()
-            if (profile != null) {
-                firstName = profile.firstName
-                lastName = profile.lastName
-                email = profile.email
-                phoneNumber = profile.phoneNumber
-                address = profile.address
-                dob = profile.dateOfBirth
-            }
-            isLoading = false
+        val profile = db.userProfileDao().getUserProfileSync()
+        if (profile != null) {
+            firstName = profile.firstName
+            lastName = profile.lastName
+            email = profile.email
+            phoneNumber = profile.phoneNumber
+            address = profile.address
+            dob = profile.dateOfBirth
+        }
+        isLoading = false
+    }
+
+    // Auto-hide the "saved" confirmation instead of leaving it on screen forever.
+    LaunchedEffect(showSavedMessage) {
+        if (showSavedMessage) {
+            delay(2500)
+            showSavedMessage = false
         }
     }
 
@@ -55,7 +61,12 @@ fun ProfileScreen() {
         }
     ) { paddingValues ->
         if (isLoading) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(paddingValues),
+                contentAlignment = androidx.compose.ui.Alignment.Center
+            ) {
                 CircularProgressIndicator()
             }
         } else {
@@ -126,9 +137,7 @@ fun ProfileScreen() {
                                 address = address,
                                 dateOfBirth = dob
                             )
-                            withContext(Dispatchers.IO) {
-                                db.userProfileDao().insertOrUpdateProfile(newProfile)
-                            }
+                            db.userProfileDao().insertOrUpdateProfile(newProfile)
                             showSavedMessage = true
                         }
                     },
@@ -161,8 +170,11 @@ fun ProfileScreen() {
                         try {
                             context.startActivity(intent)
                         } catch (e: Exception) {
-                            val fallbackIntent = Intent(Settings.ACTION_SETTINGS)
-                            context.startActivity(fallbackIntent)
+                            try {
+                                context.startActivity(Intent(Settings.ACTION_SETTINGS))
+                            } catch (e2: Exception) {
+                                android.widget.Toast.makeText(context, "Could not open system settings", android.widget.Toast.LENGTH_SHORT).show()
+                            }
                         }
                     },
                     modifier = Modifier.fillMaxWidth(),

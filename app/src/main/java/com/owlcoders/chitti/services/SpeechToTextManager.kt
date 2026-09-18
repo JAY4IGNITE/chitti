@@ -28,6 +28,9 @@ class SpeechToTextManager(
     private val mainHandler = Handler(Looper.getMainLooper())
     private var isListening = false
     private var hasTriggeredFinal = false
+    // Some recognizers deliver partial text and then an EMPTY final result list (seen on
+    // Android 16 with the Google recognizer). Keep the last partial as a fallback.
+    private var lastPartialText = ""
 
     enum class SpeechState {
         IDLE, READY, LISTENING, PROCESSING, ERROR
@@ -38,6 +41,7 @@ class SpeechToTextManager(
             Log.d(tag, "onReadyForSpeech")
             isListening = true
             hasTriggeredFinal = false
+            lastPartialText = ""
             onStateChange(SpeechState.READY)
         }
 
@@ -68,7 +72,12 @@ class SpeechToTextManager(
                 SpeechRecognizer.ERROR_AUDIO -> "Microphone audio error."
                 SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Microphone permission required."
                 SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Network issue for voice recognition."
-                SpeechRecognizer.ERROR_CLIENT -> "Voice client busy."
+                SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "The microphone is busy (is a call or another app using it?). Try again in a moment."
+                SpeechRecognizer.ERROR_CLIENT -> "Voice recognizer error. Tap mic to try again."
+                SpeechRecognizer.ERROR_SERVER -> "Speech service error. Tap mic to try again."
+                10 /* ERROR_TOO_MANY_REQUESTS (API 31) */ -> "Too many voice requests. Wait a moment and try again."
+                11 /* ERROR_SERVER_DISCONNECTED (API 31) */ -> "Speech service disconnected. Tap mic to try again."
+                12, 13 /* ERROR_LANGUAGE_NOT_SUPPORTED / UNAVAILABLE (API 31) */ -> "This language is not available for voice recognition."
                 else -> "Speech recognition error ($error)"
             }
             Log.w(tag, "Speech recognition error: $message (code $error)")
@@ -80,8 +89,9 @@ class SpeechToTextManager(
             if (hasTriggeredFinal) return
             isListening = false
             val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-            val recognizedText = matches?.firstOrNull()?.trim() ?: ""
-            Log.d(tag, "Final recognized text: $recognizedText")
+            val finalText = matches?.firstOrNull { !it.isNullOrBlank() }?.trim() ?: ""
+            val recognizedText = finalText.ifBlank { lastPartialText }
+            Log.d(tag, "Final recognized text: '$finalText' (using: '$recognizedText')")
             onStateChange(SpeechState.IDLE)
             if (recognizedText.isNotBlank()) {
                 hasTriggeredFinal = true
@@ -96,6 +106,7 @@ class SpeechToTextManager(
             val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
             val partialText = matches?.firstOrNull()?.trim() ?: ""
             if (partialText.isNotBlank()) {
+                lastPartialText = partialText
                 Log.d(tag, "Partial text: $partialText")
                 onPartialResult(partialText)
 

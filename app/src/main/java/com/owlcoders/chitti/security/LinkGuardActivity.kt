@@ -93,30 +93,37 @@ class LinkGuardActivity : ComponentActivity() {
     private fun forwardToBrowser(url: String) {
         val uri = Uri.parse(url)
         val view = Intent(Intent.ACTION_VIEW, uri)
+        val isWeb = uri.scheme.equals("http", ignoreCase = true) ||
+            uri.scheme.equals("https", ignoreCase = true)
+        val self = ComponentName(this, LinkGuardActivity::class.java)
 
-        // Resolve all candidates and drop ourselves to avoid an intent loop.
+        // Visible candidates only (Android 11+ package-visibility filtering applies here);
+        // drop ourselves to avoid an intent loop.
         val candidates = packageManager.queryIntentActivities(view, PackageManager.MATCH_ALL)
             .map { it.activityInfo }
             .filter { it.packageName != packageName }
 
         try {
             when {
-                candidates.isEmpty() -> {
-                    Toast.makeText(this, "No app available to open this link", Toast.LENGTH_SHORT).show()
-                }
                 candidates.size == 1 -> {
                     startActivity(
                         Intent(view).setComponent(ComponentName(candidates[0].packageName, candidates[0].name))
                     )
                 }
+                candidates.isEmpty() && !isWeb -> {
+                    // Non-web schemes (upi:, tel:, mailto:, ...) can never resolve back to
+                    // LinkGuard (its filter is http/https only), and startActivity() is not
+                    // subject to package-visibility filtering, so just fire it.
+                    startActivity(view)
+                }
                 else -> {
-                    val chooser = Intent.createChooser(view, "Open with").apply {
-                        putExtra(
-                            Intent.EXTRA_EXCLUDE_COMPONENTS,
-                            arrayOf(ComponentName(this@LinkGuardActivity, LinkGuardActivity::class.java))
-                        )
-                    }
-                    startActivity(chooser)
+                    // Multiple visible handlers, or a web URL whose handlers are hidden from us:
+                    // the system chooser resolves in the system process (no visibility filter);
+                    // exclude ourselves so it cannot loop back.
+                    startActivity(
+                        Intent.createChooser(view, "Open with")
+                            .putExtra(Intent.EXTRA_EXCLUDE_COMPONENTS, arrayOf(self))
+                    )
                 }
             }
         } catch (e: ActivityNotFoundException) {

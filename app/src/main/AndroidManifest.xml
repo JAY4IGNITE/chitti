@@ -6,6 +6,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SYSTEM_EXEMPTED"/>
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
 
     <!-- Notification Listener -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
@@ -15,15 +16,9 @@
     <uses-permission android:name="android.permission.WRITE_CALENDAR"/>
 
     <!-- Reminders / Alarms -->
+    <uses-permission android:name="com.android.alarm.permission.SET_ALARM"/>
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>
     <uses-permission android:name="android.permission.USE_EXACT_ALARM"/>
-
-    <!-- Camera (OCR, Document Scanning) -->
-    <uses-permission android:name="android.permission.CAMERA"/>
-
-    <!-- File Access (Documents, Screenshots) -->
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>
-    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
 
     <!-- SMS (Optional) -->
     <uses-permission android:name="android.permission.SEND_SMS"/>
@@ -31,7 +26,6 @@
     <!-- Internet (Optional, for Cartesia) -->
     <uses-permission android:name="android.permission.INTERNET"/>
 
-    <uses-feature android:name="android.hardware.camera" android:required="false"/>
     <uses-feature android:name="android.hardware.telephony" android:required="false"/>
 
     <!-- App Visibility Queries for Android 11+ -->
@@ -43,6 +37,10 @@
         <intent>
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="https" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="http" />
         </intent>
         <intent>
             <action android:name="android.speech.RecognitionService" />
@@ -67,6 +65,7 @@
         android:icon="@android:drawable/ic_dialog_email"
         android:label="Chitti"
         android:roundIcon="@android:drawable/ic_dialog_email"
+        android:enableOnBackInvokedCallback="true"
         android:supportsRtl="true">
         <activity
             android:name=".MainActivity"
@@ -85,7 +84,7 @@
             android:exported="true"
             android:label="Chitti LinkGuard"
             android:excludeFromRecents="true"
-            android:theme="@android:style/Theme.Material.Light.NoActionBar">
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -94,7 +93,7 @@
                 <data android:scheme="https" />
             </intent-filter>
         </activity>
-        
+
         <service android:name=".services.NotificationCaptureService"
                  android:label="Chitti Notification Listener"
                  android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
@@ -135,6 +134,16 @@
                   android:exported="false">
             <intent-filter>
                 <action android:name="com.owlcoders.chitti.REMINDER"/>
+            </intent-filter>
+        </receiver>
+
+        <!-- Re-arms persisted reminders after a reboot or app update -->
+        <receiver android:name=".automation.BootReceiver"
+                  android:exported="true"
+                  android:permission="android.permission.RECEIVE_BOOT_COMPLETED">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED"/>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>
             </intent-filter>
         </receiver>
     </application>

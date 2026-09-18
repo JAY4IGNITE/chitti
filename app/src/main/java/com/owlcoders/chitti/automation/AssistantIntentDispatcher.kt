@@ -1,6 +1,7 @@
 package com.owlcoders.chitti.automation
 
 import android.content.Context
+import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.util.Log
 import com.owlcoders.chitti.ChittiApp
@@ -8,22 +9,22 @@ import com.owlcoders.chitti.db.CapturedEvent
 import com.owlcoders.chitti.services.TtsEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Date
+import java.util.Locale
 
 data class AssistantResponse(
     val message: String,
     val spokenText: String = message,
     val actionType: ActionCategory = ActionCategory.CONVERSATION,
     val actionSuccess: Boolean = true,
-    val actionLabel: String? = null,
-    val matchingFiles: List<DeviceFile> = emptyList(),
-    val matchingDocuments: List<DocumentSearchResult> = emptyList()
+    val actionLabel: String? = null
 )
 
 enum class ActionCategory {
     APP_LAUNCH,
     DEVICE_CONTROL,
-    DOCUMENT_SEARCH,
-    FILE_SEARCH,
     TASK_SCHEDULE,
     TYPING,
     CONVERSATION
@@ -33,16 +34,20 @@ enum class ActionCategory {
  * Intelligent Assistant Intent Dispatcher.
  * Translates natural speech and chat into concrete Android actions, app launches,
  * deep file discoveries (including files from long ago), system controls, and spoken TTS feedback.
+ *
+ * When an [ActionExecutor] is supplied, reminders are created through it and every device
+ * action is written to the automation audit log (the "Actions" screen).
  */
 class AssistantIntentDispatcher(
     private val context: Context,
     private val appLauncher: AppLauncher,
-    private val fileFinder: FileFinder,
-    private val documentFinder: DocumentFinder,
-    private val ttsEngine: TtsEngine
+    private val ttsEngine: TtsEngine,
+    private val actionExecutor: ActionExecutor? = null
 ) {
     private val tag = "ChittiDispatcher"
     private var flashlightOn = false
+
+    private val prefixRegex = Regex("^(hey chitti|ok chitti|chitti|please|can you|could you)[,\\s]*", RegexOption.IGNORE_CASE)
 
     suspend fun processQuery(
         query: String,
@@ -50,265 +55,303 @@ class AssistantIntentDispatcher(
         shouldSpeak: Boolean = true
     ): AssistantResponse = withContext(Dispatchers.IO) {
         val trimmed = query.trim()
-        val lower = trimmed.lowercase()
-            .replace(Regex("^(chitti|hey chitti|ok chitti|please|can you|could you)\\s*"), "")
-            .trim()
+        // Strip the wake-word/politeness prefix from the ORIGINAL text so that commands which
+        // need the user's casing ("type Hello Ravi") slice the same string we matched on.
+        val cleaned = trimmed.replace(prefixRegex, "").trim()
+        val lower = cleaned.lowercase()
         Log.d(tag, "Processing query: '$trimmed' (cleaned: '$lower')")
 
+        fun reply(
+            message: String,
+            spoken: String = message,
+            type: ActionCategory = ActionCategory.CONVERSATION,
+            success: Boolean = true,
+            label: String? = null
+        ): AssistantResponse {
+            if (shouldSpeak) ttsEngine.speak(spoken)
+            return AssistantResponse(
+                message = message,
+                spokenText = spoken,
+                actionType = type,
+                actionSuccess = success,
+                actionLabel = label
+            )
+        }
+
+        if (lower.isBlank()) {
+            return@withContext reply("I didn't catch that. Try \"Open WhatsApp\" or \"What's pending today?\"", success = false, label = "Assistant")
+        }
+
         // 1. Identity & Introduction
-        if (lower.contains("who are you") || lower.contains("what is your name") || lower.contains("who made you")) {
-            val reply = "I am Chitti, your on-device mobile AI assistant. I can open apps like WhatsApp and YouTube, find documents from today or long ago, manage your agenda, and assist with your daily tasks completely privately on your device."
-            if (shouldSpeak) ttsEngine.speak(reply)
-            return@withContext AssistantResponse(
-                message = reply,
-                spokenText = reply,
-                actionType = ActionCategory.CONVERSATION,
-                actionSuccess = true,
-                actionLabel = "About Chitti"
+        if (lower.contains("who are you") || lower.contains("what is your name") || lower.contains("your name") ||
+            Regex("who (made|created|built|developed|designed) you").containsMatchIn(lower) || lower.contains("what are you")
+        ) {
+            return@withContext reply(
+                "I am Chitti, your on-device mobile AI assistant. I can open apps like WhatsApp and YouTube, set reminders, manage your agenda, and assist with your daily tasks completely privately on your device.",
+                label = "About Chitti"
             )
         }
 
         // 2. Greetings & Politeness
         if (lower.matches(Regex("^(hi|hello|hey|yo|namaste|good morning|good evening|good afternoon|good night)\\b.*"))) {
-            val reply = "Hello! I'm Chitti. What can I do for you right now? You can say \"Open WhatsApp\", \"Open YouTube\", \"Find old files\", or ask about your schedule."
-            if (shouldSpeak) ttsEngine.speak(reply)
-            return@withContext AssistantResponse(
-                message = reply,
-                spokenText = reply,
-                actionType = ActionCategory.CONVERSATION,
-                actionSuccess = true,
-                actionLabel = "Greeting"
+            return@withContext reply(
+                "Hello! I'm Chitti. What can I do for you right now? You can say \"Open WhatsApp\", \"Open YouTube\", \"Remind me to call mom in 30 minutes\", or ask about your schedule.",
+                label = "Greeting"
             )
         }
 
         if (lower.contains("how are you")) {
-            val reply = "I'm doing great and running fast on your device! Ready to help you with apps, files, or tasks."
-            if (shouldSpeak) ttsEngine.speak(reply)
-            return@withContext AssistantResponse(
-                message = reply,
-                spokenText = reply,
-                actionType = ActionCategory.CONVERSATION,
-                actionSuccess = true,
-                actionLabel = "Status"
-            )
+            return@withContext reply("I'm doing great and running fast on your device! Ready to help you with apps, files, reminders, or tasks.", label = "Status")
         }
 
-        // 3. Capabilities / Help
-        if (lower.contains("what can you do") || lower.contains("help") || lower == "features") {
-            val reply = "Here is what I can do for you:\n• Launch Apps: \"Open WhatsApp\", \"Open YouTube\", \"Open Camera\"\n• Find Files: \"Find files from long ago\", \"Search documents\"\n• Device Control: \"Turn on flashlight\", \"Turn off torch\"\n• Agenda & Tasks: \"What's pending today?\", \"My schedule\"\n• Local AI Q&A and instant voice responses."
-            val spoken = "I can open apps like WhatsApp and YouTube, find documents from today or long ago, control your flashlight, and manage your daily tasks."
-            if (shouldSpeak) ttsEngine.speak(spoken)
-            return@withContext AssistantResponse(
-                message = reply,
-                spokenText = spoken,
-                actionType = ActionCategory.CONVERSATION,
-                actionSuccess = true,
-                actionLabel = "Capabilities"
-            )
+        // 3. Reminders: "remind me to call mom in 30 minutes", "set a reminder at 5 pm to submit the deck"
+        if (Regex("^(remind me|set (a )?reminder|reminder)\\b").containsMatchIn(lower)) {
+            return@withContext handleReminder(cleaned, ::reply)
         }
 
-        // 4. Current Time & Date
+        // 4. Capabilities / Help
+        if (lower.contains("what can you do") || Regex("\\bhelp\\b").containsMatchIn(lower) || lower == "features") {
+            val message = "Here is what I can do for you:\n• Launch Apps: \"Open WhatsApp\", \"Open YouTube\", \"Open Camera\"\n• Reminders: \"Remind me to call mom in 30 minutes\"\n• Device Control: \"Turn on flashlight\", \"Turn off torch\"\n• Agenda & Tasks: \"What's pending today?\", \"My schedule\"\n• Local AI Q&A and instant voice responses."
+            val spoken = "I can open apps like WhatsApp and YouTube, set reminders, control your flashlight, and manage your daily tasks."
+            return@withContext reply(message, spoken, label = "Capabilities")
+        }
+
+        // 5. Current Time & Date
         if (lower.contains("what time") || lower.contains("current time") || lower.contains("what is the time") ||
-            lower.contains("today's date") || lower.contains("what day is it") || lower.contains("what date is it")) {
-            val now = java.util.Date()
-            val timeFormat = java.text.SimpleDateFormat("h:mm a", java.util.Locale.getDefault())
-            val dateFormat = java.text.SimpleDateFormat("EEEE, MMMM d, yyyy", java.util.Locale.getDefault())
-            val reply = "It's ${timeFormat.format(now)} on ${dateFormat.format(now)}."
-            if (shouldSpeak) ttsEngine.speak(reply)
-            return@withContext AssistantResponse(
-                message = reply,
-                spokenText = reply,
-                actionType = ActionCategory.CONVERSATION,
-                actionSuccess = true,
-                actionLabel = "Clock"
-            )
+            lower.contains("today's date") || lower.contains("what day is it") || lower.contains("what date is it")
+        ) {
+            val now = Date()
+            val timeFormat = SimpleDateFormat("h:mm a", Locale.getDefault())
+            val dateFormat = SimpleDateFormat("EEEE, MMMM d, yyyy", Locale.getDefault())
+            return@withContext reply("It's ${timeFormat.format(now)} on ${dateFormat.format(now)}.", label = "Clock")
         }
 
-        // 5. Jokes
-        if (lower.contains("tell me a joke") || lower.contains("joke")) {
+        // 6. Jokes
+        if (Regex("\\bjokes?\\b").containsMatchIn(lower)) {
             val jokes = listOf(
                 "Why do programmers prefer dark mode? Because light attracts bugs! 😄",
                 "Why did the smartphone go to school? To become a smart phone! 📱",
                 "There are 10 types of people in the world: those who understand binary, and those who don't. 🤖",
                 "Why did the developer go broke? Because they used up all their cache! 💰"
             )
-            val joke = jokes.random()
-            if (shouldSpeak) ttsEngine.speak(joke)
-            return@withContext AssistantResponse(
-                message = joke,
-                spokenText = joke,
-                actionType = ActionCategory.CONVERSATION,
-                actionSuccess = true,
-                actionLabel = "Humor"
-            )
+            return@withContext reply(jokes.random(), label = "Humor")
         }
 
-        // 6. App Launching Intent: "open whatsapp", "launch youtube", "open camera", "open ..."
+        // 7. App Launching Intent: "open whatsapp", "launch youtube", "open camera", "open ..."
         if (lower.startsWith("open ") || lower.startsWith("launch ") || lower.startsWith("start ") || lower.startsWith("go to ")) {
             val appResult = appLauncher.launch(lower)
-            val speech = if (appResult.success) appResult.message else "I couldn't find that app on your phone."
-            if (shouldSpeak) {
-                ttsEngine.speak(speech)
-            }
-            return@withContext AssistantResponse(
-                message = appResult.message,
-                spokenText = speech,
-                actionType = ActionCategory.APP_LAUNCH,
-                actionSuccess = appResult.success,
-                actionLabel = appResult.appName ?: "App"
+            actionExecutor?.recordExternal(
+                ActionId.OPEN_APP,
+                mapOf("query" to lower, "app" to (appResult.appName ?: "")),
+                appResult.success,
+                appResult.message
             )
+            val speech = if (appResult.success) appResult.message else "I couldn't find that app on your phone."
+            return@withContext reply(appResult.message, speech, ActionCategory.APP_LAUNCH, appResult.success, appResult.appName ?: "App")
         }
 
-        // 6.5. Typing Action: "type ..."
+        // 8. Typing Action: "type ..."
         if (lower.startsWith("type ")) {
-            val textToType = trimmed.substring(5).trim() // Keep original casing
+            val textToType = cleaned.substring(5).trim() // Keep original casing
             if (textToType.isNotEmpty()) {
                 val a11yService = com.owlcoders.chitti.services.ChittiAccessibilityService.instance
-                if (a11yService != null) {
+                return@withContext if (a11yService != null) {
                     a11yService.typeTextGlobal(textToType)
-                    val reply = "Typing: $textToType"
-                    if (shouldSpeak) ttsEngine.speak(reply)
-                    return@withContext AssistantResponse(
-                        message = reply,
-                        spokenText = reply,
-                        actionType = ActionCategory.TYPING,
-                        actionSuccess = true,
-                        actionLabel = "Typing Action"
+                    reply(
+                        "Switch to the app you want to type in within 10 seconds. I'll type: \"$textToType\"",
+                        "Switch to the app where you want this typed. I'll type it there.",
+                        ActionCategory.TYPING,
+                        true,
+                        "Typing Action"
                     )
                 } else {
-                    val reply = "Accessibility service is not enabled. I cannot type right now."
-                    if (shouldSpeak) ttsEngine.speak(reply)
-                    return@withContext AssistantResponse(
-                        message = reply,
-                        spokenText = reply,
-                        actionType = ActionCategory.TYPING,
-                        actionSuccess = false,
-                        actionLabel = "Typing Failed"
+                    reply(
+                        "Accessibility service is not enabled. Enable Chitti in Settings > Accessibility to let me type.",
+                        "Accessibility service is not enabled. I cannot type right now.",
+                        ActionCategory.TYPING,
+                        false,
+                        "Typing Failed"
                     )
                 }
             }
         }
 
-        // 7. Flashlight / Torch Intent: "turn on flashlight", "toggle flashlight", "torch on"
-        if (lower.contains("flashlight") || lower.contains("torch")) {
-            val isTurnOff = lower.contains("off") || lower.contains("stop") || lower.contains("disable")
-            val isTurnOn = lower.contains("on") || lower.contains("enable") || !isTurnOff
-            val resultMsg = toggleFlashlight(isTurnOn)
-            if (shouldSpeak) {
-                ttsEngine.speak(resultMsg)
+        // 9. Flashlight / Torch Intent: "turn on flashlight", "toggle flashlight", "torch off"
+        if (Regex("\\b(flashlight|flash light|torch)\\b").containsMatchIn(lower)) {
+            val turnOff = Regex("\\b(off|stop|disable)\\b").containsMatchIn(lower)
+            val turnOn = Regex("\\b(on|enable)\\b").containsMatchIn(lower)
+            val target = when {
+                turnOff && !turnOn -> false
+                turnOn && !turnOff -> true
+                else -> !flashlightOn // "toggle flashlight" or ambiguous
             }
-            return@withContext AssistantResponse(
-                message = resultMsg,
-                spokenText = resultMsg,
-                actionType = ActionCategory.DEVICE_CONTROL,
-                actionSuccess = true,
-                actionLabel = "Flashlight"
-            )
+            val (ok, resultMsg) = toggleFlashlight(target)
+            actionExecutor?.recordExternal(ActionId.TOGGLE_FLASHLIGHT, mapOf("on" to target.toString()), ok, resultMsg)
+            return@withContext reply(resultMsg, type = ActionCategory.DEVICE_CONTROL, success = ok, label = "Flashlight")
         }
 
-        // 8. File Finder Intent: "find file ...", "search files for ...", "find long ago documents", "find old files"
-        if (lower.startsWith("find file") || lower.startsWith("search file") ||
-            lower.startsWith("find document") || lower.startsWith("search document") ||
-            lower.startsWith("find doc") || lower.startsWith("search doc") ||
-            lower.contains("long ago") || lower.contains("old documents") || lower.contains("find my ")) {
-
-            val isLongAgo = lower.contains("long ago") || lower.contains("old") || lower.contains("earlier") || lower.contains("previous")
-            val timeFilter = if (isLongAgo) TimeFilter.LONG_AGO else TimeFilter.ALL_TIME
-
-            val cleanKeyword = lower
-                .replace(Regex("^(find files?|search files?|find documents?|search documents?|find docs?|search docs? for|search docs?|find my|find)\\s*"), "")
-                .replace(Regex("\\b(long ago|old|documents?|files?)\\b"), "")
-                .trim()
-
-            val foundFiles = fileFinder.queryFiles(
-                keyword = cleanKeyword,
-                timeFilter = timeFilter,
-                limit = 25
-            )
-
-            val reply = if (foundFiles.isNotEmpty()) {
-                val timeNote = if (isLongAgo) " from long ago" else ""
-                val topNames = foundFiles.take(2).joinToString(", ") { it.name }
-                "Found ${foundFiles.size} file${if (foundFiles.size > 1) "s" else ""}$timeNote including $topNames."
-            } else {
-                "I searched for files${if (cleanKeyword.isNotBlank()) " matching \"$cleanKeyword\"" else ""}, but couldn't find any. You can browse all storage files in File Finder."
-            }
-
-            if (shouldSpeak) {
-                ttsEngine.speak(reply)
-            }
-
-            return@withContext AssistantResponse(
-                message = reply,
-                spokenText = reply,
-                actionType = ActionCategory.FILE_SEARCH,
-                actionSuccess = foundFiles.isNotEmpty(),
-                actionLabel = if (isLongAgo) "Old Files" else "Files",
-                matchingFiles = foundFiles
-            )
-        }
-
-        // 9. Task & Agenda Queries: "what's pending today?", "what are my tasks?", "what do I have scheduled?"
-        if (lower.contains("what's pending") || lower.contains("my tasks") || lower.contains("schedule today") ||
-            lower.contains("what do i have") || lower.contains("agenda") || lower.contains("commitments")) {
-
+        // 11. Task & Agenda Queries: "what's pending today?", "what are my tasks?", "what do I have scheduled?"
+        if (lower.contains("what's pending") || lower.contains("whats pending") || lower.contains("my tasks") ||
+            lower.contains("schedule today") || lower.contains("my schedule") ||
+            lower.contains("what do i have") || lower.contains("agenda") || lower.contains("commitments")
+        ) {
             val pendingEvents = events.filter { it.status != "done" }
-            val reply = if (pendingEvents.isNotEmpty()) {
+            val message = if (pendingEvents.isNotEmpty()) {
                 val summary = pendingEvents.take(3).joinToString("; ") {
                     "${it.extractedWhat ?: "Task"} at ${it.extractedWhen ?: "unspecified time"}"
                 }
-                "You have ${pendingEvents.size} pending tasks: $summary."
+                "You have ${pendingEvents.size} pending task${if (pendingEvents.size > 1) "s" else ""}: $summary."
             } else {
                 "Your schedule is clear! You have no pending tasks today."
             }
-
-            if (shouldSpeak) {
-                ttsEngine.speak(reply)
-            }
-
-            return@withContext AssistantResponse(
-                message = reply,
-                spokenText = reply,
-                actionType = ActionCategory.TASK_SCHEDULE,
-                actionSuccess = true,
-                actionLabel = "Schedule"
-            )
+            return@withContext reply(message, type = ActionCategory.TASK_SCHEDULE, label = "Schedule")
         }
 
-        // 10. General Assistant AI Q&A via ExtractionEngine / Gemma RAG
+        // 12. General Assistant AI Q&A via ExtractionEngine / Gemma RAG
         val app = context.applicationContext as? ChittiApp
         val extractionEngine = app?.extractionEngine
-        val ragResult = extractionEngine?.generateRagResponse(trimmed, events)
+        // The engine clamps internally as well; clamp here too so a pasted wall of text never
+        // reaches the prompt builder.
+        val ragResult = extractionEngine?.generateRagResponse(cleaned.take(300), events)
 
         val finalResponse = if (ragResult != null && !ragResult.contains("I don't have that in my memory")) {
             ragResult
         } else {
-            "I'm Chitti, your on-device AI assistant. You can ask me to open apps like WhatsApp or YouTube, find documents and files from today or long ago, manage your agenda, or toggle your flashlight."
+            "I'm Chitti, your on-device AI assistant. You can ask me to open apps like WhatsApp or YouTube, set reminders, manage your agenda, or toggle your flashlight."
         }
-
-        if (shouldSpeak) {
-            ttsEngine.speak(finalResponse)
-        }
-
-        AssistantResponse(
-            message = finalResponse,
-            spokenText = finalResponse,
-            actionType = ActionCategory.CONVERSATION,
-            actionSuccess = true,
-            actionLabel = "Assistant"
-        )
+        reply(finalResponse, label = "Assistant")
     }
 
-    private fun toggleFlashlight(turnOn: Boolean): String {
+    // ------------------------------------------------------------------------------------
+    // Reminders
+    // ------------------------------------------------------------------------------------
+
+    internal data class ParsedReminder(val title: String, val triggerTime: Long)
+
+    private suspend fun handleReminder(
+        cleaned: String,
+        reply: (String, String, ActionCategory, Boolean, String?) -> AssistantResponse
+    ): AssistantResponse {
+        val parsed = parseReminder(cleaned)
+        if (parsed == null) {
+            val msg = "When should I remind you? Say something like \"Remind me to call mom in 30 minutes\" or \"Remind me at 5 pm to submit the deck\"."
+            return reply(msg, msg, ActionCategory.TASK_SCHEDULE, false, "Reminder")
+        }
+        val executor = actionExecutor
+        if (executor == null) {
+            val msg = "Reminders are not available right now."
+            return reply(msg, msg, ActionCategory.TASK_SCHEDULE, false, "Reminder")
+        }
+        val result = executor.execute(
+            ActionId.CREATE_REMINDER,
+            mapOf("title" to parsed.title, "triggerTime" to parsed.triggerTime.toString()),
+            userConfirmed = true // the spoken/typed command is the confirmation
+        )
+        val whenText = SimpleDateFormat("h:mm a, EEE d MMM", Locale.getDefault()).format(Date(parsed.triggerTime))
+        val msg = if (result.success) "Reminder set for $whenText: ${parsed.title}" else "Couldn't set the reminder: ${result.message}"
+        return reply(msg, msg, ActionCategory.TASK_SCHEDULE, result.success, "Reminder")
+    }
+
+    /**
+     * Understands "in N minutes/hours/seconds", "at 5", "at 5:30 pm", "tomorrow at 9", "at 17:00".
+     * Returns null when no time could be found.
+     */
+    internal fun parseReminder(text: String, nowMillis: Long = System.currentTimeMillis()): ParsedReminder? {
+        var body = text.replace(
+            Regex("^(remind me to|remind me|set a reminder to|set a reminder for|set a reminder|set reminder to|set reminder|reminder to|reminder)\\b[,\\s]*", RegexOption.IGNORE_CASE),
+            ""
+        ).trim()
+        var trigger: Long? = null
+
+        // Relative: "in 30 minutes", "in an hour", "in 2 hrs"
+        val rel = Regex("\\bin\\s+(\\d+|a|an|one|two|three|four|five|ten|fifteen|twenty|thirty|forty five|forty-five)\\s*(seconds?|secs?|minutes?|mins?|hours?|hrs?)\\b", RegexOption.IGNORE_CASE).find(body)
+        if (rel != null) {
+            val n = when (rel.groupValues[1].lowercase()) {
+                "a", "an", "one" -> 1; "two" -> 2; "three" -> 3; "four" -> 4; "five" -> 5; "ten" -> 10
+                "fifteen" -> 15; "twenty" -> 20; "thirty" -> 30; "forty five", "forty-five" -> 45
+                else -> rel.groupValues[1].toIntOrNull() ?: 0
+            }
+            val unit = rel.groupValues[2].lowercase()
+            val ms = when {
+                unit.startsWith("sec") -> n * 1_000L
+                unit.startsWith("min") -> n * 60_000L
+                else -> n * 3_600_000L
+            }
+            if (n > 0) {
+                trigger = nowMillis + ms
+                body = body.replace(rel.value, " ")
+            }
+        }
+
+        // Absolute: "at 5", "at 5:30 pm", "tomorrow at 9am", "5 pm tomorrow"
+        if (trigger == null) {
+            val abs = Regex("\\b(tomorrow\\s+)?(?:at\\s+(\\d{1,2})(?::(\\d{2}))?\\s*(am|pm|a\\.m\\.|p\\.m\\.)?|(\\d{1,2})(?::(\\d{2}))?\\s*(am|pm|a\\.m\\.|p\\.m\\.))(\\s+tomorrow)?\\b", RegexOption.IGNORE_CASE).find(body)
+            if (abs != null) {
+                val g = abs.groupValues
+                val hourStr = g[2].ifBlank { g[5] }
+                val minStr = g[3].ifBlank { g[6] }
+                val ampm = g[4].ifBlank { g[7] }.lowercase().replace(".", "")
+                val tomorrow = g[1].isNotBlank() || g[8].isNotBlank()
+                var hour = hourStr.toIntOrNull() ?: -1
+                val minute = minStr.toIntOrNull() ?: 0
+                if (hour in 0..23 && minute in 0..59) {
+                    if (ampm == "pm" && hour < 12) hour += 12
+                    if (ampm == "am" && hour == 12) hour = 0
+                    val cal = Calendar.getInstance().apply {
+                        timeInMillis = nowMillis
+                        set(Calendar.HOUR_OF_DAY, hour)
+                        set(Calendar.MINUTE, minute)
+                        set(Calendar.SECOND, 0)
+                        set(Calendar.MILLISECOND, 0)
+                    }
+                    if (tomorrow) cal.add(Calendar.DAY_OF_YEAR, 1)
+                    // "at 5" said at 15:00 with no am/pm means 17:00, not tomorrow 05:00
+                    if (!tomorrow && ampm.isBlank() && cal.timeInMillis <= nowMillis && hour < 12) {
+                        cal.add(Calendar.HOUR_OF_DAY, 12)
+                    }
+                    if (cal.timeInMillis <= nowMillis) cal.add(Calendar.DAY_OF_YEAR, 1)
+                    trigger = cal.timeInMillis
+                    body = body.replace(abs.value, " ")
+                }
+            }
+        }
+
+        if (trigger == null) return null
+
+        val title = body
+            .replace(Regex("\\b(tomorrow|today|tonight)\\b", RegexOption.IGNORE_CASE), " ")
+            .replace(Regex("^\\s*(to|that|about)\\b", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("\\s+"), " ")
+            .trim(' ', ',', '.', '-', ':')
+            .ifBlank { "Reminder" }
+            .take(120)
+        return ParsedReminder(title, trigger)
+    }
+
+    // ------------------------------------------------------------------------------------
+    // Flashlight
+    // ------------------------------------------------------------------------------------
+
+    private fun toggleFlashlight(turnOn: Boolean): Pair<Boolean, String> {
         return try {
             val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
-            val cameraId = cameraManager.cameraIdList.firstOrNull() ?: return "No camera flashlight found on this device."
+            // Pick a camera that actually has a flash unit (prefer the back camera); the first id
+            // is the front camera on some devices and has no torch.
+            val cameraId = cameraManager.cameraIdList
+                .filter { id ->
+                    cameraManager.getCameraCharacteristics(id).get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+                }
+                .sortedBy { id ->
+                    if (cameraManager.getCameraCharacteristics(id).get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_BACK) 0 else 1
+                }
+                .firstOrNull()
+                ?: return false to "This device has no camera flash to use as a torch."
+            cameraManager.setTorchMode(cameraId, turnOn)
             flashlightOn = turnOn
-            cameraManager.setTorchMode(cameraId, flashlightOn)
-            if (flashlightOn) "Flashlight turned on." else "Flashlight turned off."
+            true to if (turnOn) "Flashlight turned on." else "Flashlight turned off."
         } catch (e: Exception) {
             Log.e(tag, "Failed to toggle torch: ${e.message}")
-            "Could not toggle flashlight: ${e.message}"
+            false to "Could not toggle the flashlight. It may be in use by the camera."
         }
     }
 }

@@ -1,7 +1,9 @@
 package com.owlcoders.chitti.ui.screens
 
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.provider.CalendarContract
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -24,7 +26,16 @@ import com.owlcoders.chitti.db.entities.Task
 import com.owlcoders.chitti.services.ExtractedData
 import com.owlcoders.chitti.services.ImportanceScorer
 import com.owlcoders.chitti.services.NotificationFilter
+import com.owlcoders.chitti.ui.theme.LightScreenBg
+import com.owlcoders.chitti.ui.theme.LightScreenInk
 import kotlinx.coroutines.launch
+
+/**
+ * Hard cap on simulator input. The few-shot prompt already uses a few hundred
+ * tokens and MediaPipe aborts the process natively (not catchable) when the prompt
+ * exceeds max tokens, so unbounded pasted text must never reach extract().
+ */
+const val AI_LAB_MAX_INPUT_CHARS = 400
 
 data class SimulationResult(
     val rawText: String,
@@ -49,6 +60,7 @@ fun AiLabScreen(
     var isRunning by remember { mutableStateOf(false) }
     var result by remember { mutableStateOf<SimulationResult?>(null) }
     var smartReply by remember { mutableStateOf<String?>(null) }
+    var isGeneratingReply by remember { mutableStateOf(false) }
     var isSaved by remember { mutableStateOf(false) }
 
     val presets = listOf(
@@ -59,10 +71,12 @@ fun AiLabScreen(
         "Hey bro, are you free this weekend?"
     )
 
+    // Light screen: dark content colour so uncoloured Text/Icon read on white cards.
+    CompositionLocalProvider(LocalContentColor provides LightScreenInk) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFFF5F5F5))
+            .background(LightScreenBg)
             .verticalScroll(rememberScrollState())
     ) {
         // Header
@@ -200,13 +214,29 @@ fun AiLabScreen(
                 OutlinedTextField(
                     value = testInput,
                     onValueChange = {
-                        testInput = it
+                        testInput = it.take(AI_LAB_MAX_INPUT_CHARS)
                         isSaved = false
                         smartReply = null
                     },
                     label = { Text("Notification Text") },
+                    supportingText = {
+                        Text("${testInput.length} / $AI_LAB_MAX_INPUT_CHARS characters")
+                    },
                     modifier = Modifier.fillMaxWidth(),
-                    maxLines = 3
+                    maxLines = 3,
+                    // This field sits inside a white Card; the dark scheme's onSurface
+                    // (near-white) would make typed text invisible.
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = LightScreenInk,
+                        unfocusedTextColor = LightScreenInk,
+                        cursorColor = LightScreenInk,
+                        focusedLabelColor = Color(0xFF00695C),
+                        unfocusedLabelColor = Color.Gray,
+                        focusedSupportingTextColor = Color.Gray,
+                        unfocusedSupportingTextColor = Color.Gray,
+                        focusedBorderColor = Color(0xFF00695C),
+                        unfocusedBorderColor = Color(0xFFBDBDBD)
+                    )
                 )
 
                 Spacer(modifier = Modifier.height(12.dp))
@@ -216,41 +246,51 @@ fun AiLabScreen(
                         isRunning = true
                         isSaved = false
                         smartReply = null
+                        // Clamp again at the call site so nothing longer than the cap
+                        // can reach the LLM prompt even if state was set another way.
+                        val input = testInput.take(AI_LAB_MAX_INPUT_CHARS)
+                        // extract() is a suspend fun that switches to IO internally;
+                        // it must stay inside the composable scope (no runBlocking).
                         scope.launch {
-                            val startTime = System.currentTimeMillis()
-                            val passesFilter = NotificationFilter.shouldProcess(testInput)
+                            try {
+                                val startTime = System.currentTimeMillis()
+                                val passesFilter = NotificationFilter.shouldProcess(input)
 
-                            val engine = app.extractionEngine
-                            val extracted = if (passesFilter) {
-                                engine?.extract(testInput)
-                            } else null
+                                val engine = app.extractionEngine
+                                val extracted = if (passesFilter) {
+                                    engine?.extract(input)
+                                } else null
 
-                            val latency = System.currentTimeMillis() - startTime
+                                val latency = System.currentTimeMillis() - startTime
 
-                            val scoreFloat = if (extracted != null && extracted.what.isNotBlank()) {
-                                ImportanceScorer.score(
-                                    extractedWhat = extracted.what,
-                                    extractedWhen = extracted.whenTime,
-                                    urgency = extracted.urgency,
-                                    category = extracted.category,
-                                    rawText = testInput
+                                val scoreFloat = if (extracted != null && extracted.what.isNotBlank()) {
+                                    ImportanceScorer.score(
+                                        extractedWhat = extracted.what,
+                                        extractedWhen = extracted.whenTime,
+                                        urgency = extracted.urgency,
+                                        category = extracted.category,
+                                        rawText = input
+                                    )
+                                } else 0f
+
+                                val priority = ImportanceScorer.toPriority(scoreFloat)
+                                val scoreInt = (scoreFloat * 100).toInt()
+                                val mode = engine?.lastInferenceMode ?: "Rule-based Regex"
+
+                                result = SimulationResult(
+                                    rawText = input,
+                                    passedFilter = passesFilter,
+                                    extracted = extracted,
+                                    importanceScore = scoreInt,
+                                    priority = priority,
+                                    latencyMs = latency,
+                                    mode = mode
                                 )
-                            } else 0f
-
-                            val priority = ImportanceScorer.toPriority(scoreFloat)
-                            val scoreInt = (scoreFloat * 100).toInt()
-                            val mode = engine?.lastInferenceMode ?: "Rule-based Regex"
-
-                            result = SimulationResult(
-                                rawText = testInput,
-                                passedFilter = passesFilter,
-                                extracted = extracted,
-                                importanceScore = scoreInt,
-                                priority = priority,
-                                latencyMs = latency,
-                                mode = mode
-                            )
-                            isRunning = false
+                            } catch (e: Exception) {
+                                Toast.makeText(context, "Simulation failed: ${e.message ?: "unknown error"}", Toast.LENGTH_SHORT).show()
+                            } finally {
+                                isRunning = false
+                            }
                         }
                     },
                     modifier = Modifier.fillMaxWidth(),
@@ -380,7 +420,11 @@ fun AiLabScreen(
                                         putExtra(CalendarContract.Events.TITLE, ext.what)
                                         putExtra(CalendarContract.Events.DESCRIPTION, simResult.rawText)
                                     }
-                                    context.startActivity(intent)
+                                    try {
+                                        context.startActivity(intent)
+                                    } catch (e: ActivityNotFoundException) {
+                                        Toast.makeText(context, "No calendar app found", Toast.LENGTH_SHORT).show()
+                                    }
                                 },
                                 modifier = Modifier.weight(1f)
                             ) {
@@ -393,26 +437,41 @@ fun AiLabScreen(
                         Spacer(modifier = Modifier.height(8.dp))
 
                         TextButton(
+                            enabled = !isGeneratingReply,
                             onClick = {
+                                isGeneratingReply = true
+                                // generateSmartReply is a suspend fun (IO internally); keep it
+                                // on the composable scope with a visible loading state.
                                 scope.launch {
-                                    val dummyEvent = CapturedEvent(
-                                        sourceApp = "simulator",
-                                        rawText = simResult.rawText,
-                                        extractedWhat = ext.what,
-                                        extractedWhen = ext.whenTime,
-                                        extractedWho = ext.who,
-                                        category = ext.category,
-                                        urgency = ext.urgency,
-                                        status = "extracted",
-                                        timestamp = System.currentTimeMillis()
-                                    )
-                                    smartReply = app.extractionEngine?.generateSmartReply(dummyEvent)
+                                    try {
+                                        val dummyEvent = CapturedEvent(
+                                            sourceApp = "simulator",
+                                            rawText = simResult.rawText,
+                                            extractedWhat = ext.what,
+                                            extractedWhen = ext.whenTime,
+                                            extractedWho = ext.who,
+                                            category = ext.category,
+                                            urgency = ext.urgency,
+                                            status = "extracted",
+                                            timestamp = System.currentTimeMillis()
+                                        )
+                                        smartReply = app.extractionEngine?.generateSmartReply(dummyEvent)
+                                            ?: "Engine not ready yet"
+                                    } catch (e: Exception) {
+                                        Toast.makeText(context, "Could not generate reply", Toast.LENGTH_SHORT).show()
+                                    } finally {
+                                        isGeneratingReply = false
+                                    }
                                 }
                             }
                         ) {
-                            Icon(Icons.Filled.AutoAwesome, contentDescription = "Reply", tint = Color(0xFF673AB7))
+                            if (isGeneratingReply) {
+                                com.owlcoders.chitti.ui.components.GeminiCircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color(0xFF673AB7))
+                            } else {
+                                Icon(Icons.Filled.AutoAwesome, contentDescription = "Reply", tint = Color(0xFF673AB7))
+                            }
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Generate Smart Reply", color = Color(0xFF673AB7))
+                            Text(if (isGeneratingReply) "Generating..." else "Generate Smart Reply", color = Color(0xFF673AB7))
                         }
 
                         val reply = smartReply
@@ -443,5 +502,6 @@ fun AiLabScreen(
         }
 
         Spacer(modifier = Modifier.height(32.dp))
+    }
     }
 }

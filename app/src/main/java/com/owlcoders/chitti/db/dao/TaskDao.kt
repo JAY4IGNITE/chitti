@@ -45,6 +45,9 @@ interface TaskDao {
     @Query("SELECT COUNT(*) FROM tasks")
     suspend fun getTaskCount(): Int
 
+    @Query("DELETE FROM tasks")
+    suspend fun deleteAllTasks()
+
     @Query("SELECT COUNT(*) FROM tasks WHERE status = 'pending'")
     suspend fun getPendingCount(): Int
 

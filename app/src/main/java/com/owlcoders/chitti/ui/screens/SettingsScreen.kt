@@ -1,7 +1,14 @@
 package com.owlcoders.chitti.ui.screens
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.provider.Settings
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -15,8 +22,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.app.ActivityCompat
+import androidx.core.app.NotificationManagerCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import com.owlcoders.chitti.ui.theme.LightScreenBg
+import com.owlcoders.chitti.ui.theme.LightScreenInk
 
 @Composable
 fun SettingsScreen(
@@ -27,7 +41,6 @@ fun SettingsScreen(
     taskCount: Int = 0,
     notificationCount: Int = 0,
     memoryCount: Int = 0,
-    documentCount: Int = 0,
     chatMessageCount: Int = 0,
     automationHistoryCount: Int = 0,
     // Selective deletion callbacks
@@ -39,10 +52,70 @@ fun SettingsScreen(
     val context = LocalContext.current
     var showWipeConfirmation by remember { mutableStateOf(false) }
 
+    // Permission state is re-evaluated every time the screen resumes (i.e. when the
+    // user comes back from system Settings), instead of once at first composition.
+    var permissionRefresh by remember { mutableIntStateOf(0) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) permissionRefresh++
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    // The caller's hasNotificationAccess is computed once at launch; check the
+    // listener status ourselves on every resume so the row stays accurate.
+    val notificationListenerEnabled = remember(permissionRefresh, hasNotificationAccess) {
+        NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)
+    }
+    val hasMicrophone = remember(permissionRefresh) {
+        context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+    }
+    val hasCalendar = remember(permissionRefresh) {
+        context.checkSelfPermission(android.Manifest.permission.WRITE_CALENDAR) == PackageManager.PERMISSION_GRANTED
+    }
+
+    fun openAppInfo() {
+        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+            data = android.net.Uri.parse("package:${context.packageName}")
+        }
+        try {
+            context.startActivity(intent)
+        } catch (e: android.content.ActivityNotFoundException) {
+            Toast.makeText(context, "Could not open app settings", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // Request runtime permissions directly. If the system will no longer show the
+    // dialog ("don't ask again"), fall back to App Info so the user can still grant it.
+    var requestedPermission by remember { mutableStateOf<String?>(null) }
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        permissionRefresh++
+        if (!granted) {
+            val activity = context.findActivity()
+            val permission = requestedPermission
+            val permanentlyDenied = activity != null && permission != null &&
+                !ActivityCompat.shouldShowRequestPermissionRationale(activity, permission)
+            if (permanentlyDenied) {
+                Toast.makeText(context, "Enable the permission under App permissions", Toast.LENGTH_SHORT).show()
+                openAppInfo()
+            } else {
+                Toast.makeText(context, "Permission denied", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+    fun requestPermission(permission: String) {
+        requestedPermission = permission
+        permissionLauncher.launch(permission)
+    }
+
+    // Light screen: dark content colour so uncoloured Text/Icon read on white cards.
+    CompositionLocalProvider(LocalContentColor provides LightScreenInk) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFFF5F5F5))
+            .background(LightScreenBg)
             .verticalScroll(rememberScrollState())
     ) {
         // Header
@@ -76,44 +149,26 @@ fun SettingsScreen(
             Column(modifier = Modifier.padding(16.dp)) {
                 PermissionRow(
                     name = "Notification Listener",
-                    isGranted = hasNotificationAccess,
+                    isGranted = notificationListenerEnabled,
                     onRequest = {
-                        val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
-                        context.startActivity(intent)
-                    }
-                )
-                Divider(modifier = Modifier.padding(vertical = 8.dp))
-                PermissionRow(
-                    name = "Camera (OCR)",
-                    isGranted = context.checkSelfPermission(android.Manifest.permission.CAMERA) == android.content.pm.PackageManager.PERMISSION_GRANTED,
-                    onRequest = {
-                        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                            data = android.net.Uri.parse("package:${context.packageName}")
+                        try {
+                            context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                        } catch (e: android.content.ActivityNotFoundException) {
+                            Toast.makeText(context, "Notification access settings not available", Toast.LENGTH_SHORT).show()
                         }
-                        context.startActivity(intent)
                     }
                 )
                 Divider(modifier = Modifier.padding(vertical = 8.dp))
                 PermissionRow(
                     name = "Microphone (Voice)",
-                    isGranted = context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED,
-                    onRequest = {
-                        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                            data = android.net.Uri.parse("package:${context.packageName}")
-                        }
-                        context.startActivity(intent)
-                    }
+                    isGranted = hasMicrophone,
+                    onRequest = { requestPermission(android.Manifest.permission.RECORD_AUDIO) }
                 )
                 Divider(modifier = Modifier.padding(vertical = 8.dp))
                 PermissionRow(
                     name = "Calendar",
-                    isGranted = context.checkSelfPermission(android.Manifest.permission.WRITE_CALENDAR) == android.content.pm.PackageManager.PERMISSION_GRANTED,
-                    onRequest = {
-                        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                            data = android.net.Uri.parse("package:${context.packageName}")
-                        }
-                        context.startActivity(intent)
-                    }
+                    isGranted = hasCalendar,
+                    onRequest = { requestPermission(android.Manifest.permission.WRITE_CALENDAR) }
                 )
             }
         }
@@ -138,7 +193,6 @@ fun SettingsScreen(
                 DataStatRow("Tasks", taskCount)
                 DataStatRow("Raw Notifications", notificationCount)
                 DataStatRow("Memories", memoryCount)
-                DataStatRow("Documents", documentCount)
                 DataStatRow("Chat Messages", chatMessageCount)
                 DataStatRow("Automation Logs", automationHistoryCount)
 
@@ -146,7 +200,7 @@ fun SettingsScreen(
                 Divider()
                 Spacer(modifier = Modifier.height(8.dp))
 
-                val totalItems = eventCount + taskCount + notificationCount + memoryCount + documentCount + chatMessageCount + automationHistoryCount
+                val totalItems = eventCount + taskCount + notificationCount + memoryCount + chatMessageCount + automationHistoryCount
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
@@ -227,9 +281,7 @@ fun SettingsScreen(
             Column(modifier = Modifier.padding(16.dp)) {
                 ModelRow("LLM", "MediaPipe Gemma", "On-device")
                 Divider(modifier = Modifier.padding(vertical = 4.dp))
-                ModelRow("OCR", "ML Kit Text Recognition", "On-device")
-                Divider(modifier = Modifier.padding(vertical = 4.dp))
-                ModelRow("VAD", "Silero VAD (ONNX)", "On-device")
+                ModelRow("STT", "Android SpeechRecognizer", "On-device")
                 Divider(modifier = Modifier.padding(vertical = 4.dp))
                 ModelRow("TTS", "Android TextToSpeech", "On-device")
             }
@@ -249,6 +301,7 @@ fun SettingsScreen(
         )
 
         Spacer(modifier = Modifier.height(16.dp))
+    }
     }
 
     // Wipe confirmation dialog
@@ -276,6 +329,16 @@ fun SettingsScreen(
             }
         )
     }
+}
+
+/** Walks ContextWrappers (Compose gives a ContextThemeWrapper) up to the hosting Activity. */
+private fun Context.findActivity(): Activity? {
+    var current: Context? = this
+    while (current is ContextWrapper) {
+        if (current is Activity) return current
+        current = current.baseContext
+    }
+    return null
 }
 
 @Composable

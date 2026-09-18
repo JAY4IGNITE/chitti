@@ -28,9 +28,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.owlcoders.chitti.db.CapturedEvent
 import com.owlcoders.chitti.ui.components.ChittiCard
+import com.owlcoders.chitti.ui.components.ChittiMotion
+import com.owlcoders.chitti.ui.components.pressScale
 import com.owlcoders.chitti.ui.theme.*
 import java.util.Calendar
 
+private const val AURA_BREATH_CYCLES = 3
+
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun TodayScreen(
     events: List<CapturedEvent>,
@@ -44,15 +49,16 @@ fun TodayScreen(
         else -> "Good evening"
     }
 
-    val infiniteTransition = rememberInfiniteTransition()
-    val ambientAuraScale by infiniteTransition.animateFloat(
-        initialValue = 1.0f,
-        targetValue = 1.08f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(3000, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        )
-    )
+    // Decorative "breathing" aura. Previously an infinite transition that kept the
+    // frame clock busy for as long as the Home tab was visible; now it plays a few
+    // cycles on entry and settles, so the UI can reach an idle state.
+    val ambientAuraScale = remember { Animatable(1.0f) }
+    LaunchedEffect(Unit) {
+        repeat(AURA_BREATH_CYCLES) {
+            ambientAuraScale.animateTo(1.08f, tween(1500, easing = FastOutSlowInEasing))
+            ambientAuraScale.animateTo(1.0f, tween(1500, easing = FastOutSlowInEasing))
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -84,7 +90,7 @@ fun TodayScreen(
                         Box(
                             modifier = Modifier
                                 .size(50.dp)
-                                .scale(ambientAuraScale)
+                                .scale(ambientAuraScale.value)
                                 .clip(CircleShape)
                                 .background(
                                     Brush.radialGradient(
@@ -161,10 +167,10 @@ fun TodayScreen(
                         onClick = { onQuickAction("open youtube") }
                     )
                     SuggestionChipItem(
-                        icon = Icons.Filled.FolderOpen,
-                        label = "Find Files",
+                        icon = Icons.Filled.Alarm,
+                        label = "Remind me in 10 min",
                         tint = GeminiCyan,
-                        onClick = { onQuickAction("find files") }
+                        onClick = { onQuickAction("remind me to check my tasks in 10 minutes") }
                     )
                     SuggestionChipItem(
                         icon = Icons.Filled.FlashlightOn,
@@ -249,7 +255,7 @@ fun TodayScreen(
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = "Tap the glowing mic anytime to speak or say \"Open WhatsApp\", \"Open YouTube\", or \"Find documents\".",
+                            text = "Tap the glowing mic anytime to speak or say \"Open WhatsApp\", \"Remind me to call mom in 30 minutes\", or \"What's pending?\".",
                             style = MaterialTheme.typography.bodySmall,
                             color = TextSecondary,
                             textAlign = androidx.compose.ui.text.style.TextAlign.Center
@@ -263,10 +269,13 @@ fun TodayScreen(
                     contentPadding = PaddingValues(bottom = 80.dp)
                 ) {
                     items(events, key = { it.id }) { event ->
+                        // Cards glide into their new slot when one is deleted (spatial consistency).
                         ChittiCard(
                             event = event,
                             onDelete = { onDeleteEvent(event) },
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .animateItemPlacement(ChittiMotion.settle())
                         )
                     }
                 }
@@ -282,10 +291,12 @@ fun SuggestionChipItem(
     tint: Color,
     onClick: () -> Unit
 ) {
+    val interaction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
     Surface(
         modifier = Modifier
+            .pressScale(interaction, pressed = 0.94f)
             .clip(RoundedCornerShape(16.dp))
-            .clickable(onClick = onClick)
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
             .border(1.dp, GeminiBorder, RoundedCornerShape(16.dp)),
         shape = RoundedCornerShape(16.dp),
         color = GeminiSurfaceElevated,

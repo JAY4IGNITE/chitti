@@ -10,6 +10,7 @@ import androidx.compose.material.icons.automirrored.filled.EventNote
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -17,6 +18,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.owlcoders.chitti.db.CapturedEvent
 import com.owlcoders.chitti.db.entities.Task
+import com.owlcoders.chitti.ui.theme.LightScreenBg
+import com.owlcoders.chitti.ui.theme.LightScreenInk
 
 @Composable
 fun DashboardScreen(
@@ -24,7 +27,6 @@ fun DashboardScreen(
     tasks: List<Task> = emptyList(),
     notificationCount: Int = 0,
     memoryCount: Int = 0,
-    documentCount: Int = 0,
     automationCount: Int = 0
 ) {
     val total = events.size
@@ -37,10 +39,12 @@ fun DashboardScreen(
     val completedTasks = tasks.count { it.status == "done" }
     val highPriority = tasks.count { it.priority == 2 }
 
+    // Light screen: dark content colour so uncoloured Text/Icon read on white cards.
+    CompositionLocalProvider(LocalContentColor provides LightScreenInk) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFFF5F5F5))
+            .background(LightScreenBg)
             .verticalScroll(rememberScrollState())
     ) {
         // Header
@@ -117,13 +121,6 @@ fun DashboardScreen(
                 .padding(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            DashStatCard(
-                title = "Documents",
-                value = "$documentCount",
-                icon = Icons.Filled.Description,
-                color = Color(0xFF00838F),
-                modifier = Modifier.weight(1f)
-            )
             DashStatCard(
                 title = "Actions",
                 value = "$automationCount",
@@ -260,6 +257,7 @@ fun DashboardScreen(
         }
 
         Spacer(modifier = Modifier.height(16.dp))
+    }
     }
 }
 

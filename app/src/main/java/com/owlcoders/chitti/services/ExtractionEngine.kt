@@ -3,16 +3,25 @@ package com.owlcoders.chitti.services
 import android.content.Context
 import android.util.Log
 import com.google.mediapipe.tasks.genai.llminference.LlmInference
-import org.json.JSONObject
+import com.owlcoders.chitti.db.CapturedEvent
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import com.owlcoders.chitti.db.CapturedEvent
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
 
 /**
  * Intelligent Extraction Engine for Chitti.
  * Uses on-device Gemma LLM via MediaPipe GenAI when available,
  * with a high-accuracy, low-latency regex/rule-based NLP fallback
  * per plan.md §2.2, §7, and §14.
+ *
+ * Safety notes:
+ *  - MediaPipe enforces `prompt_tokens < maxTokens` with a native RET_CHECK that aborts the
+ *    whole process (it is NOT a catchable exception). Every prompt built here is therefore
+ *    clamped and size-checked before inference (see [runLlm]).
+ *  - Inference takes seconds on a phone, so it always runs on Dispatchers.IO regardless of
+ *    the caller's dispatcher, serialized by a mutex (LlmInference is not thread-safe).
  */
 class ExtractionEngine(private val context: Context, modelPath: String = "/data/local/tmp/gemma.bin") {
 
@@ -29,19 +38,85 @@ class ExtractionEngine(private val context: Context, modelPath: String = "/data/
         try {
             val options = LlmInference.LlmInferenceOptions.builder()
                 .setModelPath(modelPath)
-                .setMaxTokens(1024)
+                .setMaxTokens(MAX_TOKENS)
                 .build()
 
             llmInference = LlmInference.createFromOptions(context, options)
             lastInferenceMode = "Gemma 2B (On-Device)"
-            Log.d("ChittiExtraction", "LLM Initialized successfully from $modelPath")
-        } catch (e: Exception) {
-            Log.i("ChittiExtraction", "LLM file not found or unavailable, operating in fast rule-based mode: ${e.message}")
+            Log.d(TAG, "LLM Initialized successfully from $modelPath")
+        } catch (t: Throwable) {
+            // Throwable, not Exception: a missing native library (UnsatisfiedLinkError) or an
+            // OutOfMemoryError while mapping the 1.3 GB model must degrade to regex mode
+            // instead of killing the process from the warm-up coroutine.
+            Log.i(TAG, "LLM unavailable, operating in rule-based mode: ${t.javaClass.simpleName}: ${t.message}")
+            llmInference = null
             lastInferenceMode = "Rule-based Regex"
         }
     }
 
     fun isLlmLoaded(): Boolean = llmInference != null
+
+    // ------------------------------------------------------------------------------------
+    // Prompt safety helpers
+    // ------------------------------------------------------------------------------------
+
+    private fun clamp(text: String?, maxChars: Int): String {
+        val single = text.orEmpty().replace(Regex("\\s+"), " ").trim()
+        return if (single.length <= maxChars) single else single.take(maxChars).trimEnd() + "…"
+    }
+
+    private fun estimateTokens(prompt: String): Int {
+        var ascii = 0
+        var other = 0
+        for (c in prompt) if (c.code < 128) ascii++ else other++
+        // ~4 ASCII chars per token; Telugu/Hindi script and emoji tokenize per character or worse.
+        return ascii / 4 + other * 2 + 1
+    }
+
+    /**
+     * Serialized inference on the IO dispatcher.
+     * Returns null when the prompt is refused (too large for the token budget) or inference fails.
+     */
+    private suspend fun runLlm(llm: LlmInference, prompt: String): String? {
+        val est = estimateTokens(prompt)
+        if (prompt.length > MAX_PROMPT_CHARS || est > MAX_PROMPT_TOKENS_EST) {
+            Log.w(TAG, "Prompt refused (chars=${prompt.length}, estTokens=$est) to stay under the $MAX_TOKENS token budget")
+            return null
+        }
+        return withContext(Dispatchers.IO) {
+            mutex.withLock {
+                try {
+                    llm.generateResponse(prompt)
+                } catch (e: Exception) {
+                    Log.w(TAG, "LLM inference failed: ${e.message}")
+                    null
+                }
+            }
+        }
+    }
+
+    private fun parseJsonObject(raw: String): JSONObject? {
+        val cleaned = raw.replace("```json", "").replace("```", "").trim()
+        val start = cleaned.indexOf('{')
+        val end = cleaned.lastIndexOf('}')
+        if (start < 0 || end <= start) return null
+        return try {
+            JSONObject(cleaned.substring(start, end + 1))
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /** optString() returns the literal "null" for JSON null; normalise that (and missing keys) to "". */
+    private fun jsonString(json: JSONObject, key: String): String {
+        if (!json.has(key) || json.isNull(key)) return ""
+        val v = json.optString(key, "").trim()
+        return if (v.equals("null", ignoreCase = true)) "" else v
+    }
+
+    // ------------------------------------------------------------------------------------
+    // Extraction
+    // ------------------------------------------------------------------------------------
 
     /**
      * Extracts commitments, deadlines, or meetings from raw text.
@@ -52,63 +127,60 @@ class ExtractionEngine(private val context: Context, modelPath: String = "/data/
         val llm = llmInference
 
         if (llm != null) {
+            val safeText = clamp(text, MAX_MESSAGE_CHARS).replace('"', '\'')
             val prompt = """
                 You are a strict data extraction assistant. Your task is to extract commitments, deadlines, or meetings from the user's message.
                 You must output ONLY valid JSON and nothing else. No markdown, no explanations.
                 If the message does NOT contain any task, commitment, meeting, or deadline, you MUST set "what" to "".
-                
+
                 Schema:
                 { "what": "...", "when": "...", "who": "...", "category": "Work|Personal|Academic", "urgency": "High|Medium|Low", "confidence": 0.0-1.0 }
-                
+
                 Example 1:
                 Message: "Submit the hackathon deck by 10am tomorrow"
                 Output: { "what": "Submit hackathon deck", "when": "tomorrow 10am", "who": "me", "category": "Academic", "urgency": "High", "confidence": 0.95 }
-                
+
                 Example 2 (Code-mixed):
                 Message: "repu class unda? 9 ki?"
                 Output: { "what": "class", "when": "tomorrow 9:00", "who": "unknown", "category": "Academic", "urgency": "Medium", "confidence": 0.8 }
-                
+
                 Example 3 (Not a task):
                 Message: "hi how are you"
                 Output: { "what": "", "when": "", "who": "", "category": "Personal", "urgency": "Low", "confidence": 0.0 }
-                
-                Message: "$text"
-                Output: 
+
+                Message: "$safeText"
+                Output:
             """.trimIndent()
 
-            try {
-                val rawOutput = mutex.withLock {
-                    val response = llm.generateResponse(prompt)
-                    response
-                }
-
+            val rawOutput = runLlm(llm, prompt)
+            if (rawOutput != null) {
                 val latency = System.currentTimeMillis() - startTime
                 lastInferenceLatencyMs = latency
                 lastInferenceMode = "Gemma 2B (On-Device)"
-                Log.d("ChittiExtraction", "LLM Inference Latency: ${latency}ms")
+                Log.d(TAG, "LLM Inference Latency: ${latency}ms")
 
-                val cleanOutput = rawOutput.replace("```json", "").replace("```", "").trim()
-                val json = JSONObject(cleanOutput)
-
-                return ExtractedData(
-                    what = json.optString("what", ""),
-                    whenTime = json.optString("when", ""),
-                    who = json.optString("who", ""),
-                    category = json.optString("category", "Personal"),
-                    urgency = json.optString("urgency", "Medium"),
-                    confidence = json.optDouble("confidence", 0.0)
-                )
-            } catch (e: Exception) {
-                Log.w("ChittiExtraction", "LLM extraction error, using rule-based fallback: ${e.message}")
+                val json = parseJsonObject(rawOutput)
+                if (json != null) {
+                    val confidence = json.optDouble("confidence", 0.0)
+                    return ExtractedData(
+                        what = jsonString(json, "what").take(MAX_FIELD_CHARS),
+                        whenTime = jsonString(json, "when").take(MAX_FIELD_CHARS),
+                        who = jsonString(json, "who").take(MAX_FIELD_CHARS),
+                        category = jsonString(json, "category").ifBlank { "Personal" },
+                        urgency = jsonString(json, "urgency").ifBlank { "Medium" },
+                        confidence = if (confidence.isNaN()) 0.0 else confidence.coerceIn(0.0, 1.0)
+                    )
+                }
+                Log.w(TAG, "LLM output was not valid JSON, using rule-based fallback: ${rawOutput.take(120)}")
             }
         }
 
         // Rule-based / Regex extraction fallback
-        val result = ruleBasedExtract(text)
+        val result = ruleBased(text)
         val latency = System.currentTimeMillis() - startTime
         lastInferenceLatencyMs = latency
         lastInferenceMode = "Rule-based Regex"
-        Log.d("ChittiExtraction", "Rule-based Extraction Latency: ${latency}ms, Result: ${result?.what}")
+        Log.d(TAG, "Rule-based Extraction Latency: ${latency}ms, Result: ${result?.what}")
         return result
     }
 
@@ -116,98 +188,7 @@ class ExtractionEngine(private val context: Context, modelPath: String = "/data/
      * Fast, lightweight, offline rule-based entity extractor per plan.md §2.2 & §7.
      * Handles English, Telugu-English code-mix, and Hinglish.
      */
-    fun ruleBasedExtract(text: String): ExtractedData? {
-        val lower = text.lowercase()
-
-        // 1. Noise Filter - ignore casual chat/greetings with no task cues
-        val isCasual = lower.matches(Regex("^(hi|hello|hey|yo|sup|good morning|good evening|good night|how are you|kya haal|wassup|ok|okay|cool|hmm|thanks|thank you)\\b.*"))
-        val hasTaskIndicator = lower.contains("submit") || lower.contains("submission") ||
-                lower.contains("deck") || lower.contains("hackathon") || lower.contains("class") ||
-                lower.contains("fee") || lower.contains("pay") || lower.contains("kattali") ||
-                lower.contains("meeting") || lower.contains("meet") || lower.contains("call") ||
-                lower.contains("review") || lower.contains("assignment") || lower.contains("exam") ||
-                lower.contains("due") || lower.contains("deadline") || lower.contains("remind") ||
-                lower.contains("lab") || lower.contains("record") || lower.contains("project") ||
-                lower.contains("presentation") || lower.contains("standup") || lower.contains("schedule")
-
-        // Whole-word matching: the old contains("am")/contains("ki") matched inside
-        // ordinary words ("amazing", "kiraana"), marking nearly every message as timed.
-        val hasTimeIndicator = Regex("\\b(tomorrow|today|repu|lopu|ki|by|at)\\b").containsMatchIn(lower) ||
-                Regex("\\b\\d{1,2}(?::\\d{2})?\\s*(am|pm)\\b").containsMatchIn(lower) ||
-                Regex("\\b\\d{1,2}(st|nd|rd|th)\\b").containsMatchIn(lower)
-
-        if (!hasTaskIndicator && !hasTimeIndicator && isCasual) {
-            return ExtractedData(what = "", whenTime = "", who = "", category = "Personal", urgency = "Low", confidence = 0.0)
-        }
-
-        // 2. Extract When
-        var whenTime = ""
-        val timePatterns = listOf(
-            Regex("\\b(tomorrow\\s+\\d{1,2}(?::\\d{2})?\\s*(?:am|pm)?)\\b", RegexOption.IGNORE_CASE),
-            Regex("\\b(today\\s+\\d{1,2}(?::\\d{2})?\\s*(?:am|pm)?)\\b", RegexOption.IGNORE_CASE),
-            Regex("\\b(repu\\s*\\d{1,2}(?::\\d{2})?\\s*(?:am|pm|ki)?)\\b", RegexOption.IGNORE_CASE),
-            Regex("\\b(\\d{1,2}(?:st|nd|rd|th)?\\s+lopu)\\b", RegexOption.IGNORE_CASE),
-            Regex("\\b(by\\s+\\d{1,2}(?::\\d{2})?\\s*(?:am|pm)?\\s*(?:tomorrow|today)?)\\b", RegexOption.IGNORE_CASE),
-            Regex("\\b(at\\s+\\d{1,2}(?::\\d{2})?\\s*(?:am|pm)?)\\b", RegexOption.IGNORE_CASE),
-            Regex("\\b(\\d{1,2}(?::\\d{2})?\\s*(?:am|pm))\\b", RegexOption.IGNORE_CASE),
-            Regex("\\b(tomorrow|today|repu)\\b", RegexOption.IGNORE_CASE)
-        )
-        for (pattern in timePatterns) {
-            val match = pattern.find(text)
-            if (match != null) {
-                whenTime = match.groupValues[1].trim()
-                break
-            }
-        }
-
-        // 3. Extract Who / Location
-        var who = ""
-        val locationMatch = Regex("\\b(?:in|at|room|lab)\\s+([a-zA-Z0-9_\\-\\s]{2,15})\\b", RegexOption.IGNORE_CASE).find(text)
-        if (locationMatch != null) {
-            who = locationMatch.groupValues[0].trim()
-        } else if (lower.contains("lab 2") || lower.contains("lab2")) {
-            who = "Lab 2"
-        }
-
-        // 4. Extract Category & Urgency
-        val category = when {
-            lower.contains("fee") || lower.contains("kattali") || lower.contains("pay") || lower.contains("upi") || lower.contains("rs") || lower.contains("bill") -> "Work"
-            lower.contains("deck") || lower.contains("hackathon") || lower.contains("class") || lower.contains("lab") || lower.contains("assignment") || lower.contains("exam") || lower.contains("record") -> "Academic"
-            lower.contains("meeting") || lower.contains("standup") || lower.contains("sync") || lower.contains("client") || lower.contains("office") -> "Work"
-            else -> "Personal"
-        }
-
-        val urgency = when {
-            lower.contains("urgent") || lower.contains("asap") || lower.contains("marchipovaddu") || lower.contains("immediately") || lower.contains("today") -> "High"
-            lower.contains("tomorrow") || lower.contains("repu") || lower.contains("by") -> "Medium"
-            else -> "Low"
-        }
-
-        // 5. Extract What
-        val what = when {
-            lower.contains("record submission") -> "Record submission"
-            lower.contains("fee kattali") || lower.contains("pay fee") || lower.contains("fee") -> "College Fee Payment"
-            lower.contains("hackathon") && lower.contains("deck") -> "Submit hackathon deck"
-            lower.contains("class") && (lower.contains("repu") || lower.contains("tomorrow")) -> "Attend Class"
-            else -> {
-                var cleaned = text
-                if (whenTime.isNotBlank()) cleaned = cleaned.replace(whenTime, "", ignoreCase = true)
-                if (who.isNotBlank()) cleaned = cleaned.replace(who, "", ignoreCase = true)
-                cleaned = cleaned.replace(Regex("(?i)\\b(please|kindly|remember to|don't forget to|marchipovaddu)\\b"), "")
-                    .trim(',', '.', ' ', '-', ':')
-                if (cleaned.length > 3) cleaned.take(60).trim() else text.take(60)
-            }
-        }
-
-        return ExtractedData(
-            what = what,
-            whenTime = if (whenTime.isNotBlank()) whenTime else "Pending",
-            who = if (who.isNotBlank()) who else "Self",
-            category = category,
-            urgency = urgency,
-            confidence = if (what.isNotBlank() && whenTime.isNotBlank()) 0.90 else 0.70
-        )
-    }
+    fun ruleBasedExtract(text: String): ExtractedData? = ruleBased(text)
 
     suspend fun generateSmartReply(event: CapturedEvent): String {
         val llm = llmInference
@@ -216,77 +197,200 @@ class ExtractionEngine(private val context: Context, modelPath: String = "/data/
                 You are a smart reply assistant. The user received a message containing a task.
                 Draft a short, natural, and polite reply confirming that the user will do the task.
                 Only output the reply text, no quotes or explanation.
-                
-                Task: ${event.extractedWhat}
-                Time: ${event.extractedWhen}
+
+                Task: ${clamp(event.extractedWhat, MAX_FIELD_CHARS)}
+                Time: ${clamp(event.extractedWhen, 60)}
                 Reply:
             """.trimIndent()
 
-            try {
-                return mutex.withLock {
-                    llm.generateResponse(prompt).trim()
-                }
-            } catch (e: Exception) {
-                Log.w("ChittiExtraction", "LLM smart reply failed: ${e.message}")
-            }
+            val reply = runLlm(llm, prompt)?.trim()
+            if (!reply.isNullOrBlank()) return reply
         }
 
         // Fallback smart reply
-        val task = event.extractedWhat ?: "task"
+        val task = event.extractedWhat?.takeIf { it.isNotBlank() } ?: "task"
         val time = if (!event.extractedWhen.isNullOrBlank()) " by ${event.extractedWhen}" else ""
         return "Got it! I will take care of \"$task\"$time."
     }
 
     suspend fun generateRagResponse(query: String, contextEvents: List<CapturedEvent>): String {
         val llm = llmInference
-        val contextString = contextEvents.joinToString("\n") { 
-            "- ${it.extractedWhat} (Due: ${it.extractedWhen}, Category: ${it.category})" 
-        }
+        val safeQuery = clamp(query, MAX_QUERY_CHARS)
 
         if (llm != null) {
+            // Only the most recent events fit in the prompt budget; the offline fallback below
+            // still searches the full list.
+            val contextString = contextEvents
+                .filter { it.status != "done" }
+                .take(MAX_CONTEXT_EVENTS)
+                .joinToString("\n") {
+                    "- ${clamp(it.extractedWhat, 60).ifBlank { "Task" }} (Due: ${clamp(it.extractedWhen, 30).ifBlank { "unspecified" }}, Category: ${clamp(it.category, 20).ifBlank { "Personal" }})"
+                }
+
             val prompt = """
                 You are Chitti, a helpful personal assistant memory bot.
-                Answer the user's question based ONLY on the provided context of their tasks. 
+                Answer the user's question based ONLY on the provided context of their tasks.
                 If the answer is not in the context, say "I don't have that in my memory."
                 Keep it conversational but concise.
-                
+
                 Context (User's Tasks):
                 $contextString
-                
-                Question: $query
+
+                Question: $safeQuery
                 Answer:
             """.trimIndent()
 
-            try {
-                return mutex.withLock {
-                    llm.generateResponse(prompt).trim()
-                }
-            } catch (e: Exception) {
-                Log.w("ChittiExtraction", "LLM RAG response failed: ${e.message}")
-            }
+            val answer = runLlm(llm, prompt)?.trim()
+            if (!answer.isNullOrBlank()) return answer
         }
 
         // Fallback offline keyword matching RAG
-        val queryLower = query.lowercase()
-        val matching = contextEvents.filter {
+        val queryLower = safeQuery.lowercase()
+        val matching = if (queryLower.isBlank()) emptyList() else contextEvents.filter {
             it.extractedWhat?.lowercase()?.contains(queryLower) == true ||
-            it.category?.lowercase()?.contains(queryLower) == true ||
-            it.rawText.lowercase().contains(queryLower)
+                it.category?.lowercase()?.contains(queryLower) == true ||
+                it.rawText.lowercase().contains(queryLower)
         }
 
         if (matching.isNotEmpty()) {
-            return "Found in memory:\n" + matching.joinToString("\n") {
-                "• ${it.extractedWhat} (Due: ${it.extractedWhen ?: "N/A"}, Category: ${it.category})"
+            return "Found in memory:\n" + matching.take(10).joinToString("\n") {
+                "• ${it.extractedWhat ?: "Task"} (Due: ${it.extractedWhen ?: "N/A"}, Category: ${it.category ?: "Personal"})"
             }
         }
 
         if (contextEvents.isNotEmpty()) {
             return "Here are your active commitments:\n" + contextEvents.take(5).joinToString("\n") {
-                "• ${it.extractedWhat} (Due: ${it.extractedWhen ?: "N/A"}, Category: ${it.category})"
+                "• ${it.extractedWhat ?: "Task"} (Due: ${it.extractedWhen ?: "N/A"}, Category: ${it.category ?: "Personal"})"
             }
         }
 
         return "I don't have that in my memory yet."
+    }
+
+    companion object {
+        private const val TAG = "ChittiExtraction"
+
+        /** Shared input + output token budget passed to MediaPipe. */
+        private const val MAX_TOKENS = 1024
+        private const val MAX_MESSAGE_CHARS = 350
+        private const val MAX_FIELD_CHARS = 120
+        private const val MAX_QUERY_CHARS = 300
+        private const val MAX_CONTEXT_EVENTS = 8
+        private const val MAX_PROMPT_CHARS = 1900
+        private const val MAX_PROMPT_TOKENS_EST = 720
+
+        private fun words(vararg w: String) =
+            Regex("\\b(" + w.joinToString("|") { Regex.escape(it) } + ")\\b", RegexOption.IGNORE_CASE)
+
+        // Whole-word matching everywhere: substring checks turned "coffee" into a fee payment
+        // and "amazing" into a timed task.
+        private val CASUAL = Regex(
+            "^(hi|hello|hey|yo|sup|good morning|good evening|good night|how are you|kya haal|wassup|ok|okay|cool|hmm|thanks|thank you)\\b.*",
+            RegexOption.IGNORE_CASE
+        )
+        private val TASK_WORDS = words(
+            "submit", "submission", "deck", "hackathon", "class", "fee", "fees", "pay", "payment", "kattali",
+            "meeting", "meet", "call", "review", "assignment", "exam", "due", "deadline", "remind", "reminder",
+            "lab", "record", "project", "presentation", "standup", "schedule", "appointment", "interview",
+            "deliver", "send", "bring", "transfer", "bill", "invoice", "renew", "book", "ticket", "collect",
+            "pickup", "pick up", "drop", "join", "attend", "complete", "finish", "prepare", "doctor", "visit"
+        )
+        private val TIME_WORDS = Regex("\\b(tomorrow|today|tonight|repu|lopu|ki|by|at)\\b", RegexOption.IGNORE_CASE)
+        private val CLOCK = Regex("\\b\\d{1,2}(?::\\d{2})?\\s*(am|pm)\\b", RegexOption.IGNORE_CASE)
+        private val ORDINAL = Regex("\\b\\d{1,2}(st|nd|rd|th)\\b", RegexOption.IGNORE_CASE)
+        private val FIN_WORDS = words("fee", "fees", "kattali", "pay", "payment", "upi", "rs", "rupees", "bill", "invoice", "transfer")
+        private val ACADEMIC_WORDS = words("deck", "hackathon", "class", "lab", "assignment", "exam", "record", "lecture", "college")
+        private val WORK_WORDS = words("meeting", "standup", "sync", "client", "office", "interview")
+        private val URGENT_WORDS = words("urgent", "asap", "marchipovaddu", "immediately", "today", "tonight", "now")
+        private val SOON_WORDS = words("tomorrow", "repu", "by", "kal")
+        private val FEE_WHAT = Regex("\\b(fee kattali|pay (?:the )?fees?|fees?)\\b", RegexOption.IGNORE_CASE)
+
+        private val TIME_PATTERNS = listOf(
+            Regex("\\b(tomorrow\\s+\\d{1,2}(?::\\d{2})?\\s*(?:am|pm)?)\\b", RegexOption.IGNORE_CASE),
+            Regex("\\b(today\\s+\\d{1,2}(?::\\d{2})?\\s*(?:am|pm)?)\\b", RegexOption.IGNORE_CASE),
+            Regex("\\b(repu\\s*\\d{1,2}(?::\\d{2})?\\s*(?:am|pm|ki)?)\\b", RegexOption.IGNORE_CASE),
+            Regex("\\b(\\d{1,2}(?:st|nd|rd|th)?\\s+lopu)\\b", RegexOption.IGNORE_CASE),
+            Regex("\\b(by\\s+\\d{1,2}(?::\\d{2})?\\s*(?:am|pm)?\\s*(?:tomorrow|today)?)\\b", RegexOption.IGNORE_CASE),
+            Regex("\\b(at\\s+\\d{1,2}(?::\\d{2})?\\s*(?:am|pm)?)\\b", RegexOption.IGNORE_CASE),
+            Regex("\\b(\\d{1,2}(?::\\d{2})?\\s*(?:am|pm))\\b", RegexOption.IGNORE_CASE),
+            Regex("\\b(tomorrow|today|tonight|repu)\\b", RegexOption.IGNORE_CASE)
+        )
+
+        /**
+         * Static rule-based extractor. Also used by the capture service while the LLM is still
+         * warming up, so notifications are never parked as empty "pending" events.
+         */
+        fun ruleBased(text: String): ExtractedData? {
+            val lower = text.lowercase()
+
+            // 1. Noise filter: needs a task cue, or a time cue on a non-greeting message.
+            val hasTaskIndicator = TASK_WORDS.containsMatchIn(lower)
+            val hasTimeIndicator = TIME_WORDS.containsMatchIn(lower) ||
+                CLOCK.containsMatchIn(lower) || ORDINAL.containsMatchIn(lower)
+            if (!hasTaskIndicator && (!hasTimeIndicator || CASUAL.matches(lower))) {
+                return ExtractedData(what = "", whenTime = "", who = "", category = "Personal", urgency = "Low", confidence = 0.0)
+            }
+
+            // 2. Extract When
+            var whenTime = ""
+            for (pattern in TIME_PATTERNS) {
+                val match = pattern.find(text)
+                if (match != null) {
+                    whenTime = match.groupValues[1].trim()
+                    break
+                }
+            }
+
+            // 3. Extract Who / Location
+            var who = ""
+            val locationMatch = Regex("\\b(?:in|at|room|lab)\\s+([a-zA-Z0-9_\\-\\s]{2,15})\\b", RegexOption.IGNORE_CASE).find(text)
+            if (locationMatch != null) {
+                who = locationMatch.groupValues[0].trim()
+            } else if (lower.contains("lab 2") || lower.contains("lab2")) {
+                who = "Lab 2"
+            }
+
+            // 4. Extract Category & Urgency
+            val category = when {
+                FIN_WORDS.containsMatchIn(lower) -> "Work"
+                ACADEMIC_WORDS.containsMatchIn(lower) -> "Academic"
+                WORK_WORDS.containsMatchIn(lower) -> "Work"
+                else -> "Personal"
+            }
+
+            val urgency = when {
+                URGENT_WORDS.containsMatchIn(lower) -> "High"
+                SOON_WORDS.containsMatchIn(lower) -> "Medium"
+                else -> "Low"
+            }
+
+            // 5. Extract What
+            val what = when {
+                lower.contains("record submission") -> "Record submission"
+                FEE_WHAT.containsMatchIn(lower) -> "Fee Payment"
+                lower.contains("hackathon") && lower.contains("deck") -> "Submit hackathon deck"
+                Regex("\\bclass\\b").containsMatchIn(lower) && (lower.contains("repu") || lower.contains("tomorrow")) -> "Attend Class"
+                else -> {
+                    var cleaned = text
+                    if (whenTime.isNotBlank()) cleaned = cleaned.replace(whenTime, "", ignoreCase = true)
+                    if (who.isNotBlank()) cleaned = cleaned.replace(who, "", ignoreCase = true)
+                    cleaned = cleaned.replace(Regex("(?i)\\b(please|kindly|remember to|don't forget to|marchipovaddu)\\b"), "")
+                        .replace(Regex("\\s+"), " ")
+                        .trim(',', '.', ' ', '-', ':')
+                    if (cleaned.length > 3) cleaned.take(60).trim() else text.take(60).trim()
+                }
+            }
+
+            // Blank means "unknown"; callers store null. Never persist sentinel strings.
+            return ExtractedData(
+                what = what,
+                whenTime = whenTime,
+                who = who,
+                category = category,
+                urgency = urgency,
+                confidence = if (what.isNotBlank() && whenTime.isNotBlank()) 0.90 else 0.70
+            )
+        }
     }
 }
 

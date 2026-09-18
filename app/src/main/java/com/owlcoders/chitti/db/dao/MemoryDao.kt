@@ -36,6 +36,9 @@ interface MemoryDao {
     @Query("SELECT COUNT(*) FROM memories")
     suspend fun getMemoryCount(): Int
 
+    @Query("DELETE FROM memories")
+    suspend fun deleteAllMemories()
+
     @Query("SELECT DISTINCT category FROM memories ORDER BY category")
     fun getCategories(): Flow<List<String>>
 }
