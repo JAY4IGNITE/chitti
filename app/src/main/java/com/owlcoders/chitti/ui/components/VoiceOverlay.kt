@@ -21,6 +21,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -34,6 +38,13 @@ import com.owlcoders.chitti.automation.AssistantResponse
 import com.owlcoders.chitti.ui.theme.*
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
+
+private val VoiceExamples = listOf(
+    "\"Open WhatsApp\"",
+    "\"Remind me to call mom in 30 minutes\"",
+    "\"What's pending?\"",
+    "\"Turn on the flashlight\""
+)
 
 enum class VoiceAssistantState {
     IDLE, LISTENING, THINKING, SPEAKING, RESULT
@@ -77,6 +88,19 @@ fun GeminiVoiceOverlay(
         }
     }
 
+    // Completion feedback on the frame the outcome appears: a confirm for a done action, a
+    // reject for a failure. Plain answers get none (utility: not every reply is an event).
+    val haptics = rememberHaptics()
+    LaunchedEffect(assistantResponse) {
+        val r = assistantResponse ?: return@LaunchedEffect
+        if (r.actionLabel != null) {
+            if (r.actionSuccess) haptics.confirm() else haptics.reject()
+        } else if (!r.actionSuccess) {
+            haptics.reject()
+        }
+    }
+    var pastDismissPoint by remember { mutableStateOf(false) }
+
     val enter = if (reduceMotion) fadeIn(tween(160)) else
         fadeIn(tween(180)) + slideInVertically(ChittiMotion.settle()) { it / 2 } + scaleIn(ChittiMotion.Settle, initialScale = 0.96f)
     val exit = if (reduceMotion) fadeOut(tween(140)) else
@@ -106,6 +130,11 @@ fun GeminiVoiceOverlay(
                 val next = dragOffset.value + delta
                 val bounded = if (next >= 0f) next else -rubberBand(-next, sheetHeightPx)
                 scope.launch { dragOffset.snapTo(bounded) }
+                val past = bounded > sheetHeightPx * 0.42f
+                if (past != pastDismissPoint) {
+                    pastDismissPoint = past
+                    haptics.threshold()
+                }
             }
 
             // Bottom sheet: consumes clicks so inner interactions do not bubble to onDismiss
@@ -118,6 +147,7 @@ fun GeminiVoiceOverlay(
                         orientation = Orientation.Vertical,
                         state = dragState,
                         onDragStopped = { velocity ->
+                            pastDismissPoint = false
                             if (dismissing) return@draggable
                             // Momentum projection: where would the sheet come to rest?
                             val projected = dragOffset.value + projectMomentum(velocity)
@@ -144,11 +174,17 @@ fun GeminiVoiceOverlay(
                     )
                     .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
                     .background(Surface1)
-                    .border(1.dp, Hairline, RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
+                    .border(
+                        1.dp,
+                        Brush.verticalGradient(listOf(HairlineStrong, Hairline.copy(alpha = 0f))),
+                        RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+                    )
             ) {
                 // A single accent wash at the top edge; stronger while the mic is open.
+                // While listening the wash brightens with the voice, so the sheet visibly hears you.
                 val washAlpha by animateFloatAsState(
-                    if (state == VoiceAssistantState.LISTENING) 0.55f else 0.25f,
+                    if (state == VoiceAssistantState.LISTENING) 0.35f + 0.45f * rmsLevel else 0.25f,
+                    spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow),
                     label = "sheetWash"
                 )
                 Box(
@@ -240,12 +276,28 @@ fun GeminiVoiceOverlay(
                     contentAlignment = Alignment.Center
                 ) {
                     when {
+                        state == VoiceAssistantState.LISTENING && transcript.isBlank() -> {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    text = "Try saying",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = TextLow
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                RotatingText(
+                                    items = VoiceExamples,
+                                    style = MaterialTheme.typography.titleLarge,
+                                    color = TextMid,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                        }
                         state == VoiceAssistantState.LISTENING -> {
                             Text(
-                                text = if (transcript.isNotBlank()) "\"$transcript\"" else "Say \"Open WhatsApp\", \"Remind me to call mom in 30 minutes\", or \"What's pending?\"",
+                                text = transcript,
                                 style = if (transcript.length > 35) MaterialTheme.typography.titleLarge
                                     else MaterialTheme.typography.headlineMedium,
-                                color = if (transcript.isNotBlank()) TextHigh else TextLow,
+                                color = TextHigh,
                                 textAlign = TextAlign.Center
                             )
                         }
@@ -281,11 +333,11 @@ fun GeminiVoiceOverlay(
                                     )
                                 }
 
-                                Text(
+                                WordRevealText(
                                     text = assistantResponse.message,
-                                    style = MaterialTheme.typography.bodyLarge,
+                                    animate = true,
+                                    style = MaterialTheme.typography.bodyLarge.copy(textAlign = TextAlign.Center),
                                     color = TextHigh,
-                                    textAlign = TextAlign.Center,
                                     modifier = Modifier.padding(horizontal = 8.dp)
                                 )
                             }
@@ -310,7 +362,7 @@ fun GeminiVoiceOverlay(
                             Spacer(modifier = Modifier.height(14.dp))
                         }
                     }
-                    GeminiPulsingOrb(state = state, onClick = onMicClick)
+                    GeminiPulsingOrb(state = state, rmsLevel = rmsLevel, onClick = onMicClick)
                 }
 
                 Spacer(modifier = Modifier.height(6.dp))
@@ -364,83 +416,133 @@ fun AudioWaveformVisualizer(rmsLevel: Float) {
     }
 }
 
+/**
+ * The mic orb (after React Bits' Orb, redrawn for the design system: one hue, no shader noise).
+ * Each state has its own motion, so the orb says what Chitti is doing without a label:
+ *  - LISTENING: the halo swells with your actual voice level (continuous feedback, not a loop);
+ *  - THINKING: an arc sweeps around the button;
+ *  - SPEAKING: the halo breathes;
+ *  - otherwise it rests.
+ */
 @Composable
-fun GeminiPulsingOrb(state: VoiceAssistantState, onClick: () -> Unit) {
+fun GeminiPulsingOrb(state: VoiceAssistantState, rmsLevel: Float = 0f, onClick: () -> Unit) {
     val reduceMotion = rememberReducedMotion()
     val infiniteTransition = rememberInfiniteTransition(label = "orb")
 
-    // Outer ripple ring: breathes while listening/speaking, rests otherwise.
-    val ripplePeak = when {
-        reduceMotion -> 1f
-        state == VoiceAssistantState.SPEAKING -> 1.35f
-        state == VoiceAssistantState.LISTENING -> 1.15f
-        else -> 1.06f
-    }
-    val rippleScale by infiniteTransition.animateFloat(
-        initialValue = 1f,
-        targetValue = ripplePeak,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1000, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "ripple"
+    // Live voice level, smoothed by a critically damped spring so it follows without jitter.
+    val voice by animateFloatAsState(
+        targetValue = if (state == VoiceAssistantState.LISTENING && !reduceMotion) rmsLevel.coerceIn(0f, 1f) else 0f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium),
+        label = "voice"
+    )
+    val breath by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(900, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "breath"
+    )
+    val sweep by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(tween(1100, easing = LinearEasing)),
+        label = "sweep"
     )
 
-    // Inner glow ring
-    val innerScale by infiniteTransition.animateFloat(
-        initialValue = 1f,
-        targetValue = if (reduceMotion) 1f else 1.2f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(750, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "inner"
+    val haloScale = when {
+        reduceMotion -> 1f
+        state == VoiceAssistantState.LISTENING -> 1f + 0.55f * voice
+        state == VoiceAssistantState.SPEAKING -> 1.05f + 0.22f * breath
+        else -> 1f
+    }
+    val haloAlpha by animateFloatAsState(
+        when (state) {
+            VoiceAssistantState.LISTENING, VoiceAssistantState.SPEAKING -> 1f
+            VoiceAssistantState.THINKING -> 0.5f
+            else -> 0.35f
+        },
+        ChittiMotion.Settle,
+        label = "haloAlpha"
     )
+    val listening = state == VoiceAssistantState.LISTENING
+    val fill by animateColorAsState(if (listening) Accent else Surface2, ChittiMotion.settle(), label = "orbFill")
+    val glyph by animateColorAsState(if (listening) OnAccent else TextHigh, ChittiMotion.settle(), label = "orbGlyph")
 
     val interaction = remember { MutableInteractionSource() }
 
-    Box(contentAlignment = Alignment.Center) {
-        // A single accent halo that breathes only while the mic or speech is live.
+    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(96.dp)) {
+        // Halo
         Box(
             modifier = Modifier
-                .size(78.dp)
-                .scale(rippleScale)
+                .size(84.dp)
+                .graphicsLayer {
+                    scaleX = haloScale
+                    scaleY = haloScale
+                    alpha = haloAlpha
+                }
                 .clip(CircleShape)
                 .background(
                     Brush.radialGradient(
-                        colors = listOf(Accent.copy(alpha = 0.30f), Accent.copy(alpha = 0.08f), Color.Transparent)
+                        colors = listOf(Accent.copy(alpha = 0.34f), Accent.copy(alpha = 0.10f), Color.Transparent)
                     )
                 )
         )
 
-        // Main interactive mic button: feedback on press-down, springs back on release.
-        Surface(
+        // Thinking: an arc chasing around the button.
+        AnimatedVisibility(
+            visible = state == VoiceAssistantState.THINKING,
+            enter = fadeIn(tween(200)),
+            exit = fadeOut(tween(160))
+        ) {
+            Canvas(modifier = Modifier.size(74.dp)) {
+                val stroke = 2.5.dp.toPx()
+                rotate(if (reduceMotion) 0f else sweep) {
+                    drawArc(
+                        brush = Brush.sweepGradient(listOf(Color.Transparent, AccentBright)),
+                        startAngle = 0f,
+                        sweepAngle = 300f,
+                        useCenter = false,
+                        style = Stroke(width = stroke, cap = StrokeCap.Round),
+                        topLeft = androidx.compose.ui.geometry.Offset(stroke / 2, stroke / 2),
+                        size = androidx.compose.ui.geometry.Size(size.width - stroke, size.height - stroke)
+                    )
+                }
+            }
+        }
+
+        // Main mic button: feedback on press-down, springs back on release.
+        Box(
             modifier = Modifier
                 .size(62.dp)
                 .pressScale(interaction, pressed = 0.9f)
                 .clip(CircleShape)
+                .background(fill)
+                .border(1.dp, if (listening) EdgeHighlight else Hairline, CircleShape)
                 .clickable(interactionSource = interaction, indication = null, onClick = onClick),
-            shape = CircleShape,
-            color = if (state == VoiceAssistantState.LISTENING) Accent else Surface2,
-            border = androidx.compose.foundation.BorderStroke(1.dp, if (state == VoiceAssistantState.LISTENING) Accent else Hairline)
+            contentAlignment = Alignment.Center
         ) {
-            Box(contentAlignment = Alignment.Center) {
-                AnimatedContent(
-                    targetState = state,
-                    transitionSpec = { (fadeIn(tween(150)) + scaleIn(initialScale = 0.8f)) togetherWith fadeOut(tween(100)) },
-                    label = "micIcon"
-                ) { s ->
-                    Icon(
-                        imageVector = when (s) {
-                            VoiceAssistantState.SPEAKING -> Icons.Filled.GraphicEq
-                            VoiceAssistantState.THINKING -> Icons.Filled.AutoAwesome
-                            else -> Icons.Filled.Mic
-                        },
-                        contentDescription = "Microphone",
-                        tint = if (state == VoiceAssistantState.LISTENING) Color.White else TextHigh,
-                        modifier = Modifier.size(25.dp)
-                    )
-                }
+            AnimatedContent(
+                targetState = state,
+                transitionSpec = {
+                    (fadeIn(tween(150)) + scaleIn(ChittiMotion.settle(), initialScale = 0.7f)) togetherWith
+                        (fadeOut(tween(100)) + scaleOut(ChittiMotion.settle(), targetScale = 0.7f))
+                },
+                label = "micIcon"
+            ) { s ->
+                Icon(
+                    imageVector = when (s) {
+                        VoiceAssistantState.SPEAKING -> Icons.Filled.GraphicEq
+                        VoiceAssistantState.THINKING -> Icons.Filled.AutoAwesome
+                        else -> Icons.Filled.Mic
+                    },
+                    contentDescription = when (s) {
+                        VoiceAssistantState.LISTENING -> "Listening"
+                        VoiceAssistantState.THINKING -> "Working"
+                        VoiceAssistantState.SPEAKING -> "Speaking"
+                        else -> "Talk to Chitti"
+                    },
+                    tint = glyph,
+                    modifier = Modifier.size(25.dp)
+                )
             }
         }
     }

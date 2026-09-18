@@ -30,6 +30,10 @@ val Accent = Color(0xFF5B7CFA)
 val AccentBright = Color(0xFF8AA3FF)
 val AccentDeep = Color(0xFF3A57C9)
 val AccentWash = Color(0x1F5B7CFA)     // 12% accent, for selected pills and icon wells
+val OnAccent = Color(0xFFFFFFFF)       // glyphs and text sitting on a solid Accent fill
+
+/** Light catching the top edge of a floating material (bars, sheets). */
+val EdgeHighlight = Color(0x14FFFFFF)
 
 // ---------------------------------------------------------------- Semantic
 val Mint = Color(0xFF35D6A4)           // success, done, low urgency

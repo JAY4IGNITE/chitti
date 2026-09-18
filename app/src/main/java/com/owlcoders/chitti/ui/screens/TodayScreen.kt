@@ -2,9 +2,6 @@ package com.owlcoders.chitti.ui.screens
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,13 +12,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Alarm
 import androidx.compose.material.icons.filled.CheckCircleOutline
@@ -29,14 +23,12 @@ import androidx.compose.material.icons.filled.FlashlightOn
 import androidx.compose.material.icons.filled.Forum
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.TaskAlt
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
@@ -91,7 +83,7 @@ fun TodayScreen(
                     .background(AmbientGlow)
             )
             Column {
-                ScreenHeader(title = greeting, subtitle = subtitle)
+                ScreenHeader(title = greeting, subtitle = subtitle, revealTitle = true)
 
                 SectionLabel("Quick actions")
                 LazyRow(
@@ -99,8 +91,14 @@ fun TodayScreen(
                     contentPadding = PaddingValues(horizontal = Space.gutter),
                     horizontalArrangement = Arrangement.spacedBy(Space.s)
                 ) {
-                    items(QUICK_ACTIONS, key = { it.label }) { action ->
-                        QuickActionChip(action) { onQuickAction(action.query) }
+                    itemsIndexed(QUICK_ACTIONS, key = { _, a -> a.label }) { index, action ->
+                        ChipButton(
+                            label = action.label,
+                            icon = action.icon,
+                            tint = action.tint,
+                            onClick = { onQuickAction(action.query) },
+                            modifier = Modifier.staggeredEntrance(index, stepMs = 40)
+                        )
                     }
                 }
             }
@@ -138,47 +136,40 @@ fun TodayScreen(
                 )
             }
         } else {
+            val listState = rememberLazyListState()
             LazyColumn(
-                modifier = Modifier.fillMaxSize(),
+                state = listState,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .fadingEdges(top = Space.l, showTop = listState.canScrollBackward),
                 contentPadding = PaddingValues(start = Space.gutter, end = Space.gutter, bottom = Space.xxl),
                 verticalArrangement = Arrangement.spacedBy(Space.m)
             ) {
                 itemsIndexed(events, key = { _, e -> e.id }) { index, event ->
-                    ChittiCard(
-                        event = event,
-                        onDelete = { onDeleteEvent(event) },
+                    // Swipe either way to dismiss; the X on the card does the same for a tap.
+                    val dismiss = SwipeAction(
+                        label = "Dismiss",
+                        icon = Icons.Filled.CheckCircleOutline,
+                        tint = Mint,
+                        removes = true,
+                        onCommit = { onDeleteEvent(event) }
+                    )
+                    SwipeActionBox(
+                        startAction = dismiss,
+                        endAction = dismiss,
                         modifier = Modifier
                             .fillMaxWidth()
                             .staggeredEntrance(index)
                             .animateItemPlacement(ChittiMotion.settle())
-                    )
+                    ) {
+                        ChittiCard(
+                            event = event,
+                            onDelete = { onDeleteEvent(event) },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun QuickActionChip(action: QuickAction, onClick: () -> Unit) {
-    val interaction = remember { MutableInteractionSource() }
-    Row(
-        modifier = Modifier
-            .height(36.dp)
-            .pressScale(interaction, pressed = 0.95f)
-            .clip(RoundedCornerShape(10.dp))
-            .background(Surface2)
-            .border(1.dp, Hairline, RoundedCornerShape(10.dp))
-            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
-            .padding(horizontal = Space.m),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(action.icon, contentDescription = null, tint = action.tint, modifier = Modifier.size(15.dp))
-        Spacer(Modifier.width(Space.s))
-        Text(
-            text = action.label,
-            style = MaterialTheme.typography.labelMedium,
-            color = TextHigh,
-            maxLines = 1
-        )
     }
 }

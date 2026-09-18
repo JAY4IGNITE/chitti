@@ -26,6 +26,9 @@ private val ChittiColorScheme = darkColorScheme(
     onSurfaceVariant = TextMid,
     surfaceContainer = Surface2,
     surfaceContainerHigh = Surface3,
+    // Material lifts elevated surfaces (dialogs, menus) by mixing in surfaceTint, which defaults to
+    // the accent and turned every dialog blue. A neutral tint keeps the lift, drops the cast.
+    surfaceTint = Surface3,
     outline = Hairline,
     outlineVariant = Hairline,
     error = Rose,

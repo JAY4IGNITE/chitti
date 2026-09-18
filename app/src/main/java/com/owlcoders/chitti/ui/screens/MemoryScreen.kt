@@ -58,6 +58,8 @@ import com.owlcoders.chitti.ui.components.Space
 import com.owlcoders.chitti.ui.components.StatusPill
 import com.owlcoders.chitti.ui.components.pressScale
 import com.owlcoders.chitti.ui.components.staggeredEntrance
+import com.owlcoders.chitti.ui.components.SwipeAction
+import com.owlcoders.chitti.ui.components.SwipeActionBox
 import com.owlcoders.chitti.ui.theme.Accent
 import com.owlcoders.chitti.ui.theme.AccentWash
 import com.owlcoders.chitti.ui.theme.Hairline
@@ -164,15 +166,26 @@ fun MemoryScreen(
                 verticalArrangement = Arrangement.spacedBy(Space.m)
             ) {
                 itemsIndexed(filteredMemories, key = { _, m -> m.id }) { index, memory ->
-                    MemoryCard(
-                        memory = memory,
-                        dateFormat = dateFormat,
-                        onEdit = { editingMemory = memory },
-                        onDelete = { onDeleteMemory(memory) },
+                    // Swipe left to forget; the trash button does the same for a tap.
+                    SwipeActionBox(
+                        endAction = SwipeAction(
+                            label = "Forget",
+                            icon = Icons.Filled.Delete,
+                            tint = Rose,
+                            removes = true,
+                            onCommit = { onDeleteMemory(memory) }
+                        ),
                         modifier = Modifier
                             .animateItemPlacement(ChittiMotion.settle())
                             .staggeredEntrance(index)
-                    )
+                    ) {
+                        MemoryCard(
+                            memory = memory,
+                            dateFormat = dateFormat,
+                            onEdit = { editingMemory = memory },
+                            onDelete = { onDeleteMemory(memory) }
+                        )
+                    }
                 }
             }
         }

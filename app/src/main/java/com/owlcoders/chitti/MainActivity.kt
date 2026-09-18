@@ -22,6 +22,48 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.GridView
+import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.Inbox
+import androidx.compose.material.icons.outlined.Insights
+import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.outlined.Psychology
+import androidx.compose.material.icons.outlined.Science
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.SmartToy
+import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupPositionProvider
+import androidx.compose.ui.window.PopupProperties
+import androidx.navigation.NavBackStackEntry
+import com.owlcoders.chitti.ui.components.ChittiMotion
+import com.owlcoders.chitti.ui.components.Space
+import com.owlcoders.chitti.ui.components.rememberHaptics
+import com.owlcoders.chitti.ui.components.spotlight
+import com.owlcoders.chitti.ui.components.staggeredEntrance
+import kotlin.math.roundToInt
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -58,16 +100,19 @@ import com.owlcoders.chitti.ui.screens.*
 import com.owlcoders.chitti.ui.theme.*
 import kotlinx.coroutines.launch
 
-sealed class Screen(val route: String, val icon: ImageVector, val label: String) {
-    object Home : Screen("home", Icons.Filled.Home, "Today")
-    object Chat : Screen("chat", Icons.Filled.SmartToy, "Chat")
-    object Inbox : Screen("inbox", Icons.Filled.Inbox, "Inbox")
-    object Dashboard : Screen("dashboard", Icons.Filled.Dashboard, "Stats")
-    object Automation : Screen("automation", Icons.Filled.AutoAwesome, "Actions")
-    object Memory : Screen("memory", Icons.Filled.Psychology, "Memory")
-    object AiLab : Screen("ailab", Icons.Filled.Science, "AI Lab")
-    object Settings : Screen("settings", Icons.Filled.Settings, "Settings")
-    object Profile : Screen("profile", Icons.Filled.Person, "Profile")
+/** [icon] is the resting (outlined) glyph, [activeIcon] the selected (filled) one. */
+sealed class Screen(val route: String, val icon: ImageVector, val label: String, val activeIcon: ImageVector = icon) {
+    object Home : Screen("home", Icons.Outlined.Home, "Today", Icons.Filled.Home)
+    object Chat : Screen("chat", Icons.Outlined.SmartToy, "Chat", Icons.Filled.SmartToy)
+    object Inbox : Screen("inbox", Icons.Outlined.Inbox, "Inbox", Icons.Filled.Inbox)
+    object Dashboard : Screen("dashboard", Icons.Outlined.Insights, "Stats", Icons.Filled.Insights)
+    object Automation : Screen("automation", Icons.Outlined.AutoAwesome, "Actions", Icons.Filled.AutoAwesome)
+    object Memory : Screen("memory", Icons.Outlined.Psychology, "Memory", Icons.Filled.Psychology)
+    object AiLab : Screen("ailab", Icons.Outlined.Science, "AI Lab", Icons.Filled.Science)
+    object Settings : Screen("settings", Icons.Outlined.Settings, "Settings", Icons.Filled.Settings)
+    object Profile : Screen("profile", Icons.Outlined.Person, "Profile", Icons.Filled.Person)
+    /** Not a destination: the bottom-bar slot that opens the More menu. */
+    object More : Screen("more", Icons.Outlined.GridView, "More", Icons.Filled.GridView)
 }
 
 class MainActivity : ComponentActivity() {
@@ -262,10 +307,15 @@ class MainActivity : ComponentActivity() {
                             navController = navController,
                             onMicClick = { startVoiceInput() }
                         ) { innerPadding ->
+                            val reduceMotion = rememberReducedMotion()
                             NavHost(
                                 navController = navController,
                                 startDestination = Screen.Home.route,
-                                modifier = Modifier.padding(innerPadding)
+                                modifier = Modifier.padding(innerPadding),
+                                enterTransition = navEnter(reduceMotion),
+                                exitTransition = navExit(reduceMotion),
+                                popEnterTransition = navEnter(reduceMotion),
+                                popExitTransition = navExit(reduceMotion)
                             ) {
                                 composable(Screen.Home.route) {
                                     TodayScreen(
@@ -468,6 +518,39 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+/** Routes that live in the bottom bar. Moving between them is a lateral switch, not a push. */
+private val TabRoutes = setOf(Screen.Home.route, Screen.Inbox.route, Screen.Chat.route)
+
+/** Key for the "More" slot in the bottom bar, highlighted while any secondary screen is showing. */
+private const val MoreKey = "more"
+
+/**
+ * Screen transitions, following "enter and exit along the same path":
+ *  - tab to tab is a quick fade-through with a hint of scale (no direction, since tabs are peers);
+ *  - a secondary screen (from More) arrives from the right and leaves back to the right, while
+ *    the screen underneath recedes slightly left, so the spatial model is consistent both ways.
+ * Under reduced motion everything is a plain cross-fade.
+ */
+private fun isTab(entry: NavBackStackEntry) = entry.destination.route in TabRoutes
+
+private fun navEnter(reduce: Boolean): AnimatedContentTransitionScope<NavBackStackEntry>.() -> EnterTransition = {
+    when {
+        reduce -> fadeIn(tween(160))
+        !isTab(targetState) -> slideInHorizontally(ChittiMotion.settle()) { it / 3 } + fadeIn(tween(200))
+        !isTab(initialState) -> slideInHorizontally(ChittiMotion.settle()) { -it / 10 } + fadeIn(tween(200))
+        else -> fadeIn(tween(200, delayMillis = 60)) + scaleIn(ChittiMotion.settle(), initialScale = 0.98f)
+    }
+}
+
+private fun navExit(reduce: Boolean): AnimatedContentTransitionScope<NavBackStackEntry>.() -> ExitTransition = {
+    when {
+        reduce -> fadeOut(tween(120))
+        !isTab(initialState) -> slideOutHorizontally(ChittiMotion.settle()) { it / 3 } + fadeOut(tween(160))
+        !isTab(targetState) -> slideOutHorizontally(ChittiMotion.settle()) { -it / 10 } + fadeOut(tween(160))
+        else -> fadeOut(tween(90))
+    }
+}
+
 @Composable
 fun ChittiScaffold(
     navController: NavHostController,
@@ -477,153 +560,317 @@ fun ChittiScaffold(
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
 
-    val drawerScreens = listOf(Screen.Dashboard, Screen.Automation, Screen.Memory, Screen.AiLab, Screen.Settings, Screen.Profile)
-    var showMoreMenu by remember { mutableStateOf(false) }
+    fun go(route: String) {
+        navController.navigate(route) {
+            popUpTo(Screen.Home.route) { saveState = true }
+            launchSingleTop = true
+            restoreState = true
+        }
+    }
+
+    val selectedKey = when (currentRoute) {
+        null, Screen.Home.route -> Screen.Home.route
+        Screen.Inbox.route, Screen.Chat.route -> currentRoute
+        else -> MoreKey
+    }
 
     Scaffold(
-        containerColor = GeminiDarkBg,
+        containerColor = Ink,
         bottomBar = {
-            Column {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(1.dp)
-                        .background(Hairline)
-                )
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                color = Surface1
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 8.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceAround,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // 1. Home / Today
-                    BottomNavItem(
-                        screen = Screen.Home,
-                        isSelected = currentRoute == Screen.Home.route,
-                        onClick = {
-                            navController.navigate(Screen.Home.route) {
-                                popUpTo(Screen.Home.route) { saveState = true }
-                                launchSingleTop = true
-                                restoreState = true
-                            }
-                        }
-                    )
-
-                    // 2. Inbox
-                    BottomNavItem(
-                        screen = Screen.Inbox,
-                        isSelected = currentRoute == Screen.Inbox.route,
-                        onClick = {
-                            navController.navigate(Screen.Inbox.route) {
-                                popUpTo(Screen.Home.route) { saveState = true }
-                                launchSingleTop = true
-                                restoreState = true
-                            }
-                        }
-                    )
-
-                    // 3. Talk to Chitti
-                    val micInteraction = remember { MutableInteractionSource() }
-                    Box(
-                        modifier = Modifier
-                            .size(46.dp)
-                            .pressScale(micInteraction, pressed = 0.9f)
-                            .clip(CircleShape)
-                            .background(Accent)
-                            .clickable(interactionSource = micInteraction, indication = null, onClick = onMicClick),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Mic,
-                            contentDescription = "Talk to Chitti",
-                            tint = Color.White,
-                            modifier = Modifier.size(21.dp)
-                        )
-                    }
-
-                    // 4. AI Chat
-                    BottomNavItem(
-                        screen = Screen.Chat,
-                        isSelected = currentRoute == Screen.Chat.route,
-                        onClick = {
-                            navController.navigate(Screen.Chat.route) {
-                                popUpTo(Screen.Home.route) { saveState = true }
-                                launchSingleTop = true
-                                restoreState = true
-                            }
-                        }
-                    )
-
-                    // 5. More Menu
-                    Box {
-                        val moreInteraction = remember { MutableInteractionSource() }
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier
-                                .pressScale(moreInteraction, pressed = 0.92f)
-                                .clip(RoundedCornerShape(12.dp))
-                                .clickable(interactionSource = moreInteraction, indication = null) { showMoreMenu = true }
-                                .padding(horizontal = 10.dp, vertical = 6.dp)
-                        ) {
-                            Icon(Icons.Filled.MoreHoriz, contentDescription = "More", tint = TextMid, modifier = Modifier.size(21.dp))
-                            Spacer(modifier = Modifier.height(3.dp))
-                            Text("More", style = MaterialTheme.typography.labelSmall, color = TextMid)
-                        }
-
-                        DropdownMenu(
-                            expanded = showMoreMenu,
-                            onDismissRequest = { showMoreMenu = false },
-                            modifier = Modifier.background(Surface2).border(1.dp, Hairline, RoundedCornerShape(12.dp))
-                        ) {
-                            drawerScreens.forEach { screen ->
-                                DropdownMenuItem(
-                                    text = { Text(screen.label, style = MaterialTheme.typography.bodyMedium, color = TextHigh) },
-                                    leadingIcon = { Icon(screen.icon, contentDescription = screen.label, tint = TextMid, modifier = Modifier.size(18.dp)) },
-                                    onClick = {
-                                        showMoreMenu = false
-                                        navController.navigate(screen.route) {
-                                            popUpTo(Screen.Home.route) { saveState = true }
-                                            launchSingleTop = true
-                                            restoreState = true
-                                        }
-                                    }
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-            }
+            ChittiBottomBar(
+                selectedKey = selectedKey,
+                currentRoute = currentRoute,
+                onNavigate = ::go,
+                onMicClick = onMicClick
+            )
         },
         content = content
     )
+}
+
+/**
+ * The bottom bar. One selection pill slides between slots on a spring (a single object moving,
+ * rather than one highlight fading out while another fades in), icons fill when selected, and the
+ * top edge catches the light instead of being cut by a divider.
+ */
+@Composable
+private fun ChittiBottomBar(
+    selectedKey: String,
+    currentRoute: String?,
+    onNavigate: (String) -> Unit,
+    onMicClick: () -> Unit
+) {
+    val haptics = rememberHaptics()
+    val density = LocalDensity.current
+    var containerOrigin by remember { mutableStateOf(Offset.Zero) }
+    val slots = remember { mutableStateMapOf<String, Rect>() }
+    var showMore by remember { mutableStateOf(false) }
+
+    val pillX = remember { Animatable(0f) }
+    val pillW = remember { Animatable(0f) }
+    var pillPlaced by remember { mutableStateOf(false) }
+    val target = slots[selectedKey]
+    LaunchedEffect(target) {
+        if (target == null) return@LaunchedEffect
+        if (!pillPlaced) {
+            pillX.snapTo(target.left)
+            pillW.snapTo(target.width)
+            pillPlaced = true
+        } else {
+            launch { pillX.animateTo(target.left, ChittiMotion.Settle) }
+            pillW.animateTo(target.width, ChittiMotion.Settle)
+        }
+    }
+
+    fun Modifier.slot(key: String) = onGloballyPositioned { coords ->
+        val pos = coords.positionInRoot() - containerOrigin
+        slots[key] = Rect(pos, Size(coords.size.width.toFloat(), coords.size.height.toFloat()))
+    }
+
+    Column(modifier = Modifier.fillMaxWidth().background(Surface1)) {
+        // Light catching the top edge of the material: brightest in the middle, gone at the sides.
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(Brush.horizontalGradient(listOf(Hairline, EdgeHighlight, Hairline)))
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .onGloballyPositioned { containerOrigin = it.positionInRoot() }
+        ) {
+            if (pillPlaced && target != null) {
+                Box(
+                    modifier = Modifier
+                        .offset { IntOffset(pillX.value.roundToInt(), target.top.roundToInt()) }
+                        .size(
+                            width = with(density) { pillW.value.toDp() },
+                            height = with(density) { target.height.toDp() }
+                        )
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(AccentWash)
+                )
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = Space.s, vertical = Space.s),
+                horizontalArrangement = Arrangement.SpaceAround,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                BottomNavItem(
+                    screen = Screen.Home,
+                    isSelected = selectedKey == Screen.Home.route,
+                    modifier = Modifier.slot(Screen.Home.route),
+                    onClick = { onNavigate(Screen.Home.route) }
+                )
+                BottomNavItem(
+                    screen = Screen.Inbox,
+                    isSelected = selectedKey == Screen.Inbox.route,
+                    modifier = Modifier.slot(Screen.Inbox.route),
+                    onClick = { onNavigate(Screen.Inbox.route) }
+                )
+
+                // Talk to Chitti: the primary action, so it is the one solid accent in the bar.
+                val micInteraction = remember { MutableInteractionSource() }
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .pressScale(micInteraction, pressed = 0.88f)
+                        .clip(CircleShape)
+                        .background(Brush.verticalGradient(listOf(Accent, AccentDeep)))
+                        .border(1.dp, EdgeHighlight, CircleShape)
+                        .clickable(interactionSource = micInteraction, indication = null) {
+                            haptics.press()
+                            onMicClick()
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Mic,
+                        contentDescription = "Talk to Chitti",
+                        tint = OnAccent,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+
+                BottomNavItem(
+                    screen = Screen.Chat,
+                    isSelected = selectedKey == Screen.Chat.route,
+                    modifier = Modifier.slot(Screen.Chat.route),
+                    onClick = { onNavigate(Screen.Chat.route) }
+                )
+
+                Box(modifier = Modifier.slot(MoreKey)) {
+                    BottomNavItem(
+                        screen = Screen.More,
+                        isSelected = selectedKey == MoreKey,
+                        onClick = { showMore = !showMore }
+                    )
+                    MoreMenu(
+                        expanded = showMore,
+                        currentRoute = currentRoute,
+                        onDismiss = { showMore = false },
+                        onSelect = { route ->
+                            showMore = false
+                            onNavigate(route)
+                        }
+                    )
+                }
+            }
+        }
+    }
 }
 
 @Composable
 fun BottomNavItem(
     screen: Screen,
     isSelected: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
-    val tint by animateColorAsState(if (isSelected) Accent else TextMid, label = "navTint")
-    val pill by animateFloatAsState(if (isSelected) 1f else 0f, com.owlcoders.chitti.ui.components.ChittiMotion.Settle, label = "navPill")
+    val tint by animateColorAsState(if (isSelected) AccentBright else TextMid, ChittiMotion.settle(), label = "navTint")
     val interaction = remember { MutableInteractionSource() }
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier
-            .pressScale(interaction, pressed = 0.94f)
-            .clip(RoundedCornerShape(12.dp))
-            .background(Accent.copy(alpha = 0.12f * pill))
+        modifier = modifier
+            .pressScale(interaction, pressed = 0.92f)
+            .clip(RoundedCornerShape(14.dp))
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 7.dp)
     ) {
-        Icon(screen.icon, contentDescription = screen.label, tint = tint, modifier = Modifier.size(21.dp))
+        // Filled when selected, outlined otherwise: the state is readable without colour.
+        Crossfade(targetState = isSelected, animationSpec = tween(150), label = "navIcon") { selected ->
+            Icon(
+                imageVector = if (selected) screen.activeIcon else screen.icon,
+                contentDescription = screen.label,
+                tint = tint,
+                modifier = Modifier.size(22.dp)
+            )
+        }
         Spacer(modifier = Modifier.height(3.dp))
-        Text(screen.label, style = MaterialTheme.typography.labelSmall, color = tint, fontWeight = FontWeight.Medium)
+        Text(
+            screen.label,
+            style = MaterialTheme.typography.labelSmall,
+            color = tint,
+            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium
+        )
+    }
+}
+
+private val MoreDestinations = listOf(
+    Screen.Dashboard to Sky,
+    Screen.Automation to Amber,
+    Screen.Memory to Iris,
+    Screen.AiLab to Mint,
+    Screen.Settings to TextMid,
+    Screen.Profile to Accent
+)
+
+/**
+ * The More menu, anchored to its button: it grows up and out of the button's corner and shrinks
+ * back into it, so where it came from and where it goes are the same place.
+ */
+@Composable
+private fun MoreMenu(
+    expanded: Boolean,
+    currentRoute: String?,
+    onDismiss: () -> Unit,
+    onSelect: (String) -> Unit
+) {
+    val transition = remember { MutableTransitionState(false) }
+    transition.targetState = expanded
+    if (!transition.currentState && !transition.targetState) return
+
+    val reduce = rememberReducedMotion()
+    val density = LocalDensity.current
+    val gapPx = with(density) { 10.dp.roundToPx() }
+
+    Popup(
+        popupPositionProvider = remember(gapPx) { AboveAnchorEndAligned(gapPx) },
+        onDismissRequest = onDismiss,
+        properties = PopupProperties(focusable = true)
+    ) {
+        AnimatedVisibility(
+            visibleState = transition,
+            enter = if (reduce) fadeIn(tween(120)) else
+                fadeIn(tween(120)) + scaleIn(ChittiMotion.settle(), initialScale = 0.6f, transformOrigin = TransformOrigin(0.9f, 1f)),
+            exit = if (reduce) fadeOut(tween(100)) else
+                fadeOut(tween(140)) + scaleOut(ChittiMotion.settle(), targetScale = 0.6f, transformOrigin = TransformOrigin(0.9f, 1f))
+        ) {
+            Column(
+                modifier = Modifier
+                    .width(260.dp)
+                    .clip(RoundedCornerShape(22.dp))
+                    .background(Surface2)
+                    .border(1.dp, HairlineStrong, RoundedCornerShape(22.dp))
+                    .padding(Space.s)
+            ) {
+                MoreDestinations.chunked(3).forEachIndexed { row, items ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(Space.xs)) {
+                        items.forEachIndexed { col, (screen, tint) ->
+                            MoreTile(
+                                screen = screen,
+                                tint = tint,
+                                selected = screen.route == currentRoute,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .staggeredEntrance(row * 3 + col, stepMs = 25),
+                                onClick = { onSelect(screen.route) }
+                            )
+                        }
+                    }
+                    if (row == 0) Spacer(Modifier.height(Space.xs))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MoreTile(
+    screen: Screen,
+    tint: Color,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val interaction = remember { MutableInteractionSource() }
+    Column(
+        modifier = modifier
+            .pressScale(interaction, pressed = 0.94f)
+            .clip(RoundedCornerShape(16.dp))
+            .background(if (selected) Surface3 else Color.Transparent)
+            .spotlight(tint.copy(alpha = 0.16f))
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
+            .padding(vertical = Space.m),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(RoundedCornerShape(13.dp))
+                .background(tint.copy(alpha = 0.14f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(screen.activeIcon, contentDescription = null, tint = tint, modifier = Modifier.size(20.dp))
+        }
+        Spacer(Modifier.height(Space.s))
+        Text(screen.label, style = MaterialTheme.typography.labelMedium, color = if (selected) TextHigh else TextMid, maxLines = 1)
+    }
+}
+
+/** Places a popup above its anchor with their end edges aligned, clamped to the window. */
+private class AboveAnchorEndAligned(private val gapPx: Int) : PopupPositionProvider {
+    override fun calculatePosition(
+        anchorBounds: IntRect,
+        windowSize: IntSize,
+        layoutDirection: LayoutDirection,
+        popupContentSize: IntSize
+    ): IntOffset {
+        val x = (anchorBounds.right - popupContentSize.width).coerceIn(0, (windowSize.width - popupContentSize.width).coerceAtLeast(0))
+        val y = (anchorBounds.top - popupContentSize.height - gapPx).coerceAtLeast(0)
+        return IntOffset(x, y)
     }
 }

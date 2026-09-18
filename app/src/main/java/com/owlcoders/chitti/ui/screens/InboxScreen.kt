@@ -1,5 +1,11 @@
 package com.owlcoders.chitti.ui.screens
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -16,6 +22,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
@@ -48,6 +55,9 @@ import com.owlcoders.chitti.ui.components.SecondaryButton
 import com.owlcoders.chitti.ui.components.SegmentedTabs
 import com.owlcoders.chitti.ui.components.Space
 import com.owlcoders.chitti.ui.components.StatusPill
+import com.owlcoders.chitti.ui.components.SwipeAction
+import com.owlcoders.chitti.ui.components.SwipeActionBox
+import com.owlcoders.chitti.ui.components.fadingEdges
 import com.owlcoders.chitti.ui.components.pressScale
 import com.owlcoders.chitti.ui.components.staggeredEntrance
 import com.owlcoders.chitti.ui.theme.Mint
@@ -112,7 +122,10 @@ fun InboxScreen(
                 }
             )
         } else {
+            val listState = rememberLazyListState()
             LazyColumn(
+                state = listState,
+                modifier = Modifier.fadingEdges(top = Space.l, showTop = listState.canScrollBackward),
                 contentPadding = PaddingValues(
                     start = Space.gutter,
                     end = Space.gutter,
@@ -125,15 +138,34 @@ fun InboxScreen(
                 // state would jump to whichever item slides into the same position after a
                 // delete or a filter change.
                 itemsIndexed(filteredNotifications, key = { _, n -> n.id }) { index, notification ->
-                    NotificationCard(
-                        notification = notification,
-                        dateFormat = dateFormat,
-                        onMarkProcessed = { onMarkProcessed(notification) },
-                        onDelete = { onDelete(notification) },
+                    // Right: mark processed (it leaves the list only on the Unprocessed tab).
+                    // Left: delete. The card's own buttons do the same for a tap.
+                    SwipeActionBox(
+                        startAction = if (notification.processed) null else SwipeAction(
+                            label = "Processed",
+                            icon = Icons.Filled.Done,
+                            tint = Mint,
+                            removes = selectedTab == 1,
+                            onCommit = { onMarkProcessed(notification) }
+                        ),
+                        endAction = SwipeAction(
+                            label = "Delete",
+                            icon = Icons.Filled.Delete,
+                            tint = Rose,
+                            removes = true,
+                            onCommit = { onDelete(notification) }
+                        ),
                         modifier = Modifier
                             .animateItemPlacement(ChittiMotion.settle())
                             .staggeredEntrance(index)
-                    )
+                    ) {
+                        NotificationCard(
+                            notification = notification,
+                            dateFormat = dateFormat,
+                            onMarkProcessed = { onMarkProcessed(notification) },
+                            onDelete = { onDelete(notification) }
+                        )
+                    }
                 }
             }
         }
@@ -191,14 +223,24 @@ fun NotificationCard(
         Spacer(Modifier.height(Space.l))
 
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            if (notification.processed) {
-                StatusPill(text = "Processed", tint = Mint, icon = Icons.Filled.Check)
-            } else {
-                SecondaryButton(
-                    text = "Mark processed",
-                    onClick = onMarkProcessed,
-                    icon = Icons.Filled.Done
-                )
+            // The button becomes the pill in place, so the result appears where the action was.
+            AnimatedContent(
+                targetState = notification.processed,
+                transitionSpec = {
+                    (fadeIn(tween(160)) + scaleIn(ChittiMotion.settle(), initialScale = 0.85f)) togetherWith
+                        fadeOut(tween(100))
+                },
+                label = "processed"
+            ) { processed ->
+                if (processed) {
+                    StatusPill(text = "Processed", tint = Mint, icon = Icons.Filled.Check)
+                } else {
+                    SecondaryButton(
+                        text = "Mark processed",
+                        onClick = onMarkProcessed,
+                        icon = Icons.Filled.Done
+                    )
+                }
             }
             Spacer(Modifier.weight(1f))
             IconAction(

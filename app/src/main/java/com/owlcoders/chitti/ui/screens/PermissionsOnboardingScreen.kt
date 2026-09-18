@@ -9,6 +9,12 @@ import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -26,6 +32,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Accessibility
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Notifications
@@ -53,7 +60,11 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.owlcoders.chitti.services.ChittiAccessibilityService
+import com.owlcoders.chitti.ui.components.BlurText
+import com.owlcoders.chitti.ui.components.ChittiMotion
 import com.owlcoders.chitti.ui.components.ChittiSurfaceCard
+import com.owlcoders.chitti.ui.components.MeterRow
+import com.owlcoders.chitti.ui.components.rememberHaptics
 import com.owlcoders.chitti.ui.components.HairlineDivider
 import com.owlcoders.chitti.ui.components.ListRow
 import com.owlcoders.chitti.ui.components.PrimaryButton
@@ -64,6 +75,9 @@ import com.owlcoders.chitti.ui.components.StatusPill
 import com.owlcoders.chitti.ui.components.pressScale
 import com.owlcoders.chitti.ui.components.staggeredEntrance
 import com.owlcoders.chitti.ui.theme.Accent
+import com.owlcoders.chitti.ui.theme.AccentBright
+import com.owlcoders.chitti.ui.theme.AmbientGlow
+import com.owlcoders.chitti.ui.theme.HairlineStrong
 import com.owlcoders.chitti.ui.theme.Hairline
 import com.owlcoders.chitti.ui.theme.Mint
 import com.owlcoders.chitti.ui.theme.Surface2
@@ -135,31 +149,37 @@ fun PermissionsOnboardingScreen(
         ) {
             Spacer(Modifier.height(Space.xxxl))
 
-            // Hero: app mark, wordmark, one line of copy.
-            Box(
-                modifier = Modifier
-                    .staggeredEntrance(0)
-                    .size(64.dp)
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(Surface2)
-                    .border(1.dp, Hairline, RoundedCornerShape(20.dp)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    Icons.Filled.AutoAwesome,
-                    contentDescription = null,
-                    tint = Accent,
-                    modifier = Modifier.size(28.dp)
+            // Hero: app mark sitting in one quiet accent glow, the wordmark arriving out of a blur,
+            // one line of copy.
+            Box(contentAlignment = Alignment.Center, modifier = Modifier.staggeredEntrance(0)) {
+                Box(
+                    modifier = Modifier
+                        .size(140.dp)
+                        .background(AmbientGlow)
                 )
+                Box(
+                    modifier = Modifier
+                        .size(68.dp)
+                        .clip(RoundedCornerShape(22.dp))
+                        .background(Surface2)
+                        .border(1.dp, HairlineStrong, RoundedCornerShape(22.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.Filled.AutoAwesome,
+                        contentDescription = null,
+                        tint = AccentBright,
+                        modifier = Modifier.size(30.dp)
+                    )
+                }
             }
 
-            Spacer(Modifier.height(Space.xl))
+            Spacer(Modifier.height(Space.s))
 
-            Text(
+            BlurText(
                 text = "Chitti",
-                style = MaterialTheme.typography.headlineLarge,
-                color = TextHigh,
-                modifier = Modifier.staggeredEntrance(1)
+                style = MaterialTheme.typography.displayLarge,
+                color = TextHigh
             )
 
             Spacer(Modifier.height(Space.s))
@@ -172,10 +192,24 @@ fun PermissionsOnboardingScreen(
                 modifier = Modifier.staggeredEntrance(2)
             )
 
-            Spacer(Modifier.height(Space.xxxl))
+            Spacer(Modifier.height(Space.xxl))
+
+            // Progress through the three required grants, so the goal and the distance to it are visible.
+            val granted = listOf(hasMic, hasNotification, hasAccessibility).count { it }
+            MeterRow(
+                label = if (granted == 3) "All set" else "Required access",
+                value = granted,
+                total = 3,
+                tint = if (granted == 3) Mint else Accent,
+                modifier = Modifier
+                    .padding(horizontal = Space.xs)
+                    .staggeredEntrance(3)
+            )
+
+            Spacer(Modifier.height(Space.m))
 
             ChittiSurfaceCard(
-                modifier = Modifier.staggeredEntrance(3),
+                modifier = Modifier.staggeredEntrance(4),
                 contentPadding = PaddingValues(horizontal = Space.l, vertical = Space.xs)
             ) {
                 PermissionItem(
@@ -223,7 +257,7 @@ fun PermissionsOnboardingScreen(
 
             PrimaryButton(
                 text = "Continue",
-                modifier = Modifier.staggeredEntrance(4),
+                modifier = Modifier.staggeredEntrance(5),
                 onClick = {
                     refresh()
                     if (hasMic && hasNotification && hasAccessibility) {
@@ -273,16 +307,33 @@ fun PermissionItem(
     isGranted: Boolean,
     onClick: () -> Unit
 ) {
+    // A grant that lands while the screen is open is confirmed where it happened: the button
+    // turns into the pill in place, with a confirm haptic on the same frame.
+    val haptics = rememberHaptics()
+    var wasGranted by remember { mutableStateOf(isGranted) }
+    LaunchedEffect(isGranted) {
+        if (isGranted && !wasGranted) haptics.confirm()
+        wasGranted = isGranted
+    }
     ListRow(
         title = title,
         subtitle = description,
         icon = icon,
-        iconTint = Accent,
+        iconTint = if (isGranted) Mint else Accent,
         trailing = {
-            if (isGranted) {
-                StatusPill(text = "Granted", tint = Mint)
-            } else {
-                SecondaryButton(text = "Grant", onClick = onClick)
+            AnimatedContent(
+                targetState = isGranted,
+                transitionSpec = {
+                    (fadeIn(tween(160)) + scaleIn(ChittiMotion.settle(), initialScale = 0.8f)) togetherWith
+                        fadeOut(tween(100))
+                },
+                label = "grant"
+            ) { granted ->
+                if (granted) {
+                    StatusPill(text = "Granted", tint = Mint, icon = Icons.Filled.Check)
+                } else {
+                    SecondaryButton(text = "Grant", onClick = onClick)
+                }
             }
         }
     )

@@ -1,6 +1,7 @@
 package com.owlcoders.chitti.ui.components
 
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloatAsState
@@ -29,6 +30,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.blur
@@ -60,11 +62,14 @@ import kotlin.math.sin
 import kotlin.random.Random
 
 /*
- * Jetpack Compose ports of React Bits pieces (reactbits.dev), kept to the three that carry meaning
+ * Jetpack Compose ports of React Bits pieces (reactbits.dev), kept to the ones that carry meaning
  * rather than decoration:
- *  - Modifier.spotlight         <- Components/SpotlightCard  (light follows the finger on a card)
- *  - CountUpText                <- TextAnimations/CountUp    (a metric arriving, not just appearing)
- *  - Modifier.staggeredEntrance <- Components/AnimatedList   (a list assembling in reading order)
+ *  - Modifier.spotlight         <- Components/SpotlightCard     (light follows the finger on a card)
+ *  - CountUpText                <- TextAnimations/CountUp       (a metric arriving, not just appearing)
+ *  - Modifier.staggeredEntrance <- Components/AnimatedList      (a list assembling in reading order)
+ *  - BlurText                   <- TextAnimations/BlurText      (the greeting arriving, once)
+ *  - RotatingText               <- TextAnimations/RotatingText  (example voice commands, one at a time)
+ *  - WordRevealText             <- TextAnimations/SplitText     (a fresh reply reading in like a stream)
  * Every effect honours the system reduced-motion setting (animator scale 0).
  */
 
@@ -120,14 +125,21 @@ fun Modifier.spotlight(
 
 // ------------------------------------------------------------------------------------ Lists
 
-/** AnimatedList: item [index] fades, rises and un-scales into place after index * [stepMs]. */
+/**
+ * AnimatedList: item [index] fades, rises and un-scales into place after index * [stepMs].
+ * Plays once: the "played" flag is saveable, so a lazy item scrolled back into view, or a tab
+ * revisited, is simply there. Only the first screenful is staggered; an item first reached by
+ * scrolling animates immediately instead of leaving a blank gap under the finger.
+ */
 fun Modifier.staggeredEntrance(index: Int, stepMs: Long = 55, maxDelayMs: Long = 600): Modifier = composed {
     val reduce = rememberReducedMotion()
-    val progress = remember { Animatable(if (reduce) 1f else 0f) }
+    var played by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(reduce) }
+    val progress = remember { Animatable(if (played) 1f else 0f) }
     LaunchedEffect(Unit) {
-        if (reduce) return@LaunchedEffect
-        delay(minOf(index * stepMs, maxDelayMs))
+        if (played) return@LaunchedEffect
+        if (index < 8) delay(minOf(index * stepMs, maxDelayMs))
         progress.animateTo(1f, ChittiMotion.Settle)
+        played = true
     }
     graphicsLayer {
         val p = progress.value
@@ -157,4 +169,136 @@ fun CountUpText(
         label = "countUp"
     )
     Text(text = value.toString(), modifier = modifier, style = style, color = color, fontWeight = fontWeight)
+}
+
+// ------------------------------------------------------------------------------------ Text
+
+/**
+ * BlurText (React Bits TextAnimations/BlurText): words rise out of a soft blur one after another,
+ * in reading order. Plays once per [text]; revisiting the screen shows it settled, so it reads as
+ * an arrival rather than a loop. Blur needs API 31+; below that the words only fade and rise.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun BlurText(
+    text: String,
+    modifier: Modifier = Modifier,
+    style: TextStyle = TextStyle.Default,
+    color: Color = LocalContentColor.current,
+    stepMs: Long = 90,
+    maxBlur: Dp = 10.dp
+) {
+    val reduce = rememberReducedMotion()
+    var played by androidx.compose.runtime.saveable.rememberSaveable(text) { mutableStateOf(reduce) }
+    val words = remember(text) { text.split(' ').filter { it.isNotEmpty() } }
+    FlowRow(modifier = modifier) {
+        words.forEachIndexed { index, word ->
+            val progress = remember(text) { Animatable(if (played) 1f else 0f) }
+            LaunchedEffect(text) {
+                if (progress.value >= 1f) return@LaunchedEffect
+                delay(index * stepMs)
+                progress.animateTo(1f, ChittiMotion.settle())
+                if (index == words.lastIndex) played = true
+            }
+            val p = progress.value
+            Text(
+                text = if (index == words.lastIndex) word else "$word ",
+                style = style,
+                color = color,
+                modifier = Modifier
+                    .graphicsLayer {
+                        alpha = p
+                        translationY = (1f - p) * 10f * density
+                    }
+                    .then(if (p < 1f) Modifier.blur(maxBlur * (1f - p)) else Modifier)
+            )
+        }
+    }
+}
+
+/**
+ * RotatingText (React Bits TextAnimations/RotatingText): cycles through [items], each leaving
+ * upward as the next rises from below, so the direction of travel says "next". Stops rotating
+ * (shows the first item) under reduced motion.
+ */
+@Composable
+fun RotatingText(
+    items: List<String>,
+    modifier: Modifier = Modifier,
+    style: TextStyle = TextStyle.Default,
+    color: Color = LocalContentColor.current,
+    intervalMs: Long = 2800,
+    textAlign: androidx.compose.ui.text.style.TextAlign? = null
+) {
+    val reduce = rememberReducedMotion()
+    var index by remember { androidx.compose.runtime.mutableIntStateOf(0) }
+    LaunchedEffect(items, reduce) {
+        if (reduce || items.size < 2) return@LaunchedEffect
+        while (isActive) {
+            delay(intervalMs)
+            index = (index + 1) % items.size
+        }
+    }
+    androidx.compose.animation.AnimatedContent(
+        targetState = items.getOrElse(index) { "" },
+        modifier = modifier,
+        transitionSpec = {
+            (androidx.compose.animation.slideInVertically(ChittiMotion.settle()) { it / 2 } +
+                androidx.compose.animation.fadeIn(tween(220))) togetherWith
+                (androidx.compose.animation.slideOutVertically(ChittiMotion.settle()) { -it / 2 } +
+                    androidx.compose.animation.fadeOut(tween(160)))
+        },
+        contentAlignment = Alignment.Center,
+        label = "rotatingText"
+    ) { value ->
+        Text(value, style = style, color = color, textAlign = textAlign)
+    }
+}
+
+/**
+ * Word-by-word reveal for text that just arrived (an assistant reply), the way a streamed answer
+ * reads. A single Text with per-word alpha, so wrapping and selection behave like plain text.
+ * With [animate] false, or under reduced motion, the text is shown at once.
+ */
+@Composable
+fun WordRevealText(
+    text: String,
+    animate: Boolean,
+    modifier: Modifier = Modifier,
+    style: TextStyle = TextStyle.Default,
+    color: Color = LocalContentColor.current,
+    perWordMs: Int = 28,
+    maxMs: Int = 900,
+    onRevealed: () -> Unit = {}
+) {
+    val reduce = rememberReducedMotion()
+    val words = remember(text) { text.split(' ') }
+    // Fully revealed is words + 2: each word takes two steps to reach full strength.
+    val revealed = words.size + 2f
+    val progress = remember(text) { Animatable(if (animate && !reduce) 0f else revealed) }
+    LaunchedEffect(text, animate) {
+        if (!animate || reduce || progress.value >= revealed) {
+            if (animate) onRevealed()
+            return@LaunchedEffect
+        }
+        val duration = (words.size * perWordMs).coerceAtMost(maxMs)
+        // Each word takes ~2 steps to fade in, so the leading edge reads soft, not typed.
+        progress.animateTo(revealed, tween(duration, easing = LinearEasing))
+        onRevealed()
+    }
+    val p = progress.value
+    val annotated = if (p >= revealed) {
+        androidx.compose.ui.text.AnnotatedString(text)
+    } else {
+        androidx.compose.ui.text.buildAnnotatedString {
+            words.forEachIndexed { i, word ->
+                val a = ((p - i) / 2f).coerceIn(0f, 1f)
+                pushStyle(androidx.compose.ui.text.SpanStyle(color = color.copy(alpha = color.alpha * a)))
+                append(word)
+                if (i < words.lastIndex) append(' ')
+                pop()
+            }
+        }
+    }
+    Text(text = annotated, modifier = modifier, style = style, color = color)
 }

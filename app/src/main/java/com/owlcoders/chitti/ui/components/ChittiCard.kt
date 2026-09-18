@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Event
@@ -166,12 +167,15 @@ fun ChittiCard(event: CapturedEvent, modifier: Modifier = Modifier, onDelete: ()
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f)
             )
+            val dismissInteraction = remember { MutableInteractionSource() }
             Box(
                 modifier = Modifier
-                    .size(26.dp)
-                    .clip(RoundedCornerShape(8.dp))
+                    .size(30.dp)
+                    .pressScale(dismissInteraction, pressed = 0.88f)
+                    .clip(RoundedCornerShape(9.dp))
+                    .background(Surface2)
                     .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
+                        interactionSource = dismissInteraction,
                         indication = null,
                         onClick = onDelete
                     ),
@@ -305,7 +309,7 @@ fun ChittiCard(event: CapturedEvent, modifier: Modifier = Modifier, onDelete: ()
                             Spacer(Modifier.height(Space.m))
                             CardAction(
                                 label = "Send",
-                                icon = Icons.Filled.Event,
+                                icon = Icons.AutoMirrored.Filled.Send,
                                 tint = Accent,
                                 onClick = {
                                     val sendIntent = Intent().apply {

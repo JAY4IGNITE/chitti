@@ -2,6 +2,17 @@ package com.owlcoders.chitti.ui.components
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.util.VelocityTracker
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -94,6 +105,7 @@ fun ScreenHeader(
     title: String,
     subtitle: String? = null,
     modifier: Modifier = Modifier,
+    revealTitle: Boolean = false,
     trailing: @Composable RowScope.() -> Unit = {}
 ) {
     Row(
@@ -103,11 +115,16 @@ fun ScreenHeader(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.headlineMedium,
-                color = TextHigh
-            )
+            // Large title: every screen answers "where am I" at a glance.
+            if (revealTitle) {
+                BlurText(text = title, style = MaterialTheme.typography.headlineLarge, color = TextHigh)
+            } else {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.headlineLarge,
+                    color = TextHigh
+                )
+            }
             if (subtitle != null) {
                 Spacer(Modifier.height(2.dp))
                 Text(
@@ -273,6 +290,7 @@ fun EmptyState(
     ) {
         Box(
             modifier = Modifier
+                .staggeredEntrance(0)
                 .size(56.dp)
                 .clip(RoundedCornerShape(18.dp))
                 .background(Surface2)
@@ -282,13 +300,14 @@ fun EmptyState(
             Icon(icon, contentDescription = null, tint = TextLow, modifier = Modifier.size(24.dp))
         }
         Spacer(Modifier.height(Space.l))
-        Text(title, style = MaterialTheme.typography.titleMedium, color = TextHigh)
+        Text(title, style = MaterialTheme.typography.titleMedium, color = TextHigh, modifier = Modifier.staggeredEntrance(1))
         Spacer(Modifier.height(Space.xs))
         Text(
             message,
             style = MaterialTheme.typography.bodySmall,
             color = TextMid,
-            textAlign = TextAlign.Center
+            textAlign = TextAlign.Center,
+            modifier = Modifier.staggeredEntrance(2)
         )
     }
 }
@@ -342,7 +361,7 @@ fun PrimaryButton(
     enabled: Boolean = true,
     icon: ImageVector? = null,
     fill: Boolean = true
-) = BaseButton(text, onClick, Accent, Color.White, null, modifier, enabled, icon, fill)
+) = BaseButton(text, onClick, Accent, OnAccent, null, modifier, enabled, icon, fill)
 
 @Composable
 fun SecondaryButton(
@@ -394,8 +413,9 @@ fun Dot(color: Color, size: androidx.compose.ui.unit.Dp = 6.dp, modifier: Modifi
 }
 
 /**
- * Segmented control with a thumb that springs between options. Replaces ad-hoc filter chips so
- * every screen switches views the same way.
+ * Segmented control. Tap a segment, or grab the thumb and drag it: it tracks the finger 1:1,
+ * rubber-bands past either end, ticks as it crosses each segment, and on release lands on the
+ * segment its momentum is heading for, carrying the finger's velocity into the settle.
  */
 @Composable
 fun SegmentedTabs(
@@ -406,12 +426,31 @@ fun SegmentedTabs(
 ) {
     var widthPx by remember { mutableIntStateOf(0) }
     val density = LocalDensity.current
-    val segmentPx = if (options.isEmpty()) 0f else widthPx.toFloat() / options.size
-    val thumbX by animateFloatAsState(
-        targetValue = segmentPx * selectedIndex,
-        animationSpec = ChittiMotion.settle(),
-        label = "segmentThumb"
-    )
+    val count = options.size.coerceAtLeast(1)
+    val segmentPx = widthPx.toFloat() / count
+    val thumbX = remember { Animatable(0f) }
+    var dragging by remember { mutableStateOf(false) }
+    var measured by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val haptics = rememberHaptics()
+    val select by rememberUpdatedState(onSelect)
+    val selectedNow by rememberUpdatedState(selectedIndex)
+
+    LaunchedEffect(selectedIndex, segmentPx) {
+        if (segmentPx <= 0f || dragging) return@LaunchedEffect
+        val target = segmentPx * selectedIndex
+        if (!measured) {
+            thumbX.snapTo(target)
+            measured = true
+        } else {
+            thumbX.animateTo(target, ChittiMotion.Settle)
+        }
+    }
+
+    // While dragging, the labels follow the segment under the thumb, not the committed one.
+    val hovered = if (segmentPx > 0f) ((thumbX.value + segmentPx / 2f) / segmentPx).toInt().coerceIn(0, count - 1) else selectedIndex
+    val activeIndex = if (dragging) hovered else selectedIndex
+
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -420,21 +459,76 @@ fun SegmentedTabs(
             .background(Surface2)
             .border(1.dp, Hairline, RoundedCornerShape(10.dp))
             .onSizeChanged { widthPx = it.width }
+            .pointerInput(count) {
+                val tracker = VelocityTracker()
+                var raw = 0f
+                var lastHover = -1
+                fun seg() = size.width.toFloat() / count
+                detectHorizontalDragGestures(
+                    onDragStart = { down ->
+                        // Only the thumb is draggable, as on iOS; a drag that starts elsewhere is ignored.
+                        dragging = down.x >= thumbX.value && down.x <= thumbX.value + seg()
+                        if (dragging) {
+                            tracker.resetTracking()
+                            raw = thumbX.value
+                            lastHover = ((raw + seg() / 2f) / seg()).toInt()
+                            scope.launch { thumbX.stop() }
+                        }
+                    },
+                    onHorizontalDrag = { change, delta ->
+                        if (dragging) {
+                            change.consume()
+                            tracker.addPosition(change.uptimeMillis, change.position)
+                            val maxX = seg() * (count - 1)
+                            raw += delta
+                            val visual = when {
+                                raw < 0f -> -rubberBand(-raw, seg())
+                                raw > maxX -> maxX + rubberBand(raw - maxX, seg())
+                                else -> raw
+                            }
+                            scope.launch { thumbX.snapTo(visual) }
+                            val hover = ((visual + seg() / 2f) / seg()).toInt().coerceIn(0, count - 1)
+                            if (hover != lastHover) {
+                                lastHover = hover
+                                haptics.tick()
+                            }
+                        }
+                    },
+                    onDragEnd = {
+                        if (dragging) {
+                            val v = tracker.calculateVelocity().x
+                            // A segmented control is short, so use the snappier deceleration rate.
+                            val projected = thumbX.value + projectMomentum(v, decelerationRate = 0.99f)
+                            val target = ((projected + seg() / 2f) / seg()).toInt().coerceIn(0, count - 1)
+                            scope.launch { thumbX.animateTo(seg() * target, ChittiMotion.Settle, initialVelocity = v) }
+                            dragging = false
+                            if (target != selectedNow) select(target)
+                        }
+                    },
+                    onDragCancel = {
+                        if (dragging) {
+                            dragging = false
+                            scope.launch { thumbX.animateTo(seg() * selectedNow, ChittiMotion.Settle) }
+                        }
+                    }
+                )
+            }
     ) {
         if (widthPx > 0) {
             Box(
                 modifier = Modifier
-                    .offset { IntOffset(thumbX.roundToInt(), 0) }
+                    .offset { IntOffset(thumbX.value.roundToInt(), 0) }
                     .width(with(density) { segmentPx.toDp() })
                     .fillMaxSize()
                     .padding(3.dp)
                     .clip(RoundedCornerShape(8.dp))
                     .background(Surface3)
+                    .border(1.dp, EdgeHighlight, RoundedCornerShape(8.dp))
             )
         }
         Row(modifier = Modifier.fillMaxSize()) {
             options.forEachIndexed { index, option ->
-                val selected = index == selectedIndex
+                val selected = index == activeIndex
                 val color by animateColorAsState(if (selected) TextHigh else TextMid, label = "segmentLabel")
                 Box(
                     modifier = Modifier
@@ -443,7 +537,12 @@ fun SegmentedTabs(
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null
-                        ) { onSelect(index) },
+                        ) {
+                            if (index != selectedIndex) {
+                                haptics.tick()
+                                onSelect(index)
+                            }
+                        },
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
@@ -469,7 +568,14 @@ fun MeterRow(
     modifier: Modifier = Modifier
 ) {
     val fraction = if (total <= 0) 0f else (value.toFloat() / total).coerceIn(0f, 1f)
-    val animated by animateFloatAsState(fraction, ChittiMotion.settle(), label = "meter")
+    // Fill from empty on first display, so the proportion is read as it arrives.
+    var armed by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { armed = true }
+    val animated by animateFloatAsState(
+        if (armed) fraction else 0f,
+        spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessLow),
+        label = "meter"
+    )
     Column(modifier = modifier.padding(vertical = Space.s)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Dot(tint)
@@ -493,6 +599,39 @@ fun MeterRow(
                     .background(tint)
             )
         }
+    }
+}
+
+/**
+ * Compact tappable chip: tinted glyph, label, raised surface. Quick actions and suggestions use
+ * this so every "do this now" affordance looks and responds the same way.
+ */
+@Composable
+fun ChipButton(
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    icon: ImageVector? = null,
+    tint: Color = Accent
+) {
+    val interaction = remember { MutableInteractionSource() }
+    Row(
+        modifier = modifier
+            .height(36.dp)
+            .pressScale(interaction, pressed = 0.95f)
+            .clip(RoundedCornerShape(10.dp))
+            .background(Surface2)
+            .border(1.dp, Hairline, RoundedCornerShape(10.dp))
+            .spotlight(tint.copy(alpha = 0.14f))
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
+            .padding(horizontal = Space.m),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (icon != null) {
+            Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(15.dp))
+            Spacer(Modifier.width(Space.s))
+        }
+        Text(label, style = MaterialTheme.typography.labelMedium, color = TextHigh, maxLines = 1)
     }
 }
 

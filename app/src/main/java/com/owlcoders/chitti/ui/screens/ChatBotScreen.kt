@@ -36,6 +36,23 @@ import com.owlcoders.chitti.db.entities.ChatHistoryEntity
 import com.owlcoders.chitti.db.entities.Memory
 import com.owlcoders.chitti.services.TtsEngine
 import com.owlcoders.chitti.ui.components.ChittiMotion
+import com.owlcoders.chitti.ui.components.ChipButton
+import com.owlcoders.chitti.ui.components.WordRevealText
+import com.owlcoders.chitti.ui.components.fadingEdges
+import com.owlcoders.chitti.ui.components.rememberHaptics
+import com.owlcoders.chitti.ui.components.staggeredEntrance
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.text.input.ImeAction
 import com.owlcoders.chitti.ui.components.LatticeLoader
 import com.owlcoders.chitti.ui.components.pressScale
 import com.owlcoders.chitti.ui.components.rememberReducedMotion
@@ -43,6 +60,15 @@ import com.owlcoders.chitti.ui.components.LatticePatterns
 import com.owlcoders.chitti.ui.components.LatticeStatus
 import com.owlcoders.chitti.ui.theme.*
 import kotlinx.coroutines.launch
+
+private data class ChatSuggestion(val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector, val tint: Color, val query: String)
+
+private val ChatSuggestions = listOf(
+    ChatSuggestion("What's pending?", Icons.Filled.TaskAlt, Sky, "what's pending"),
+    ChatSuggestion("Remind me in 10 min", Icons.Filled.Alarm, Accent, "remind me to check my tasks in 10 minutes"),
+    ChatSuggestion("Open WhatsApp", Icons.Filled.Forum, Mint, "open whatsapp"),
+    ChatSuggestion("Toggle flashlight", Icons.Filled.FlashlightOn, Amber, "toggle flashlight")
+)
 
 data class ChatMessage(
     val text: String,
@@ -66,7 +92,7 @@ fun ChatBotScreen(
 
     val greeting = remember {
         ChatMessage(
-            "Hey! I'm Chitti, your mobile AI assistant ✨ I can open apps (like WhatsApp or YouTube), set reminders, manage tasks, or answer anything. Try asking me!",
+            "Hi, I'm Chitti. I can open apps like WhatsApp or YouTube, set reminders, keep track of your tasks, or answer a question. What do you need?",
             false
         )
     }
@@ -95,6 +121,10 @@ fun ChatBotScreen(
 
     var inputText by remember { mutableStateOf("") }
     var isThinking by remember { mutableStateOf(false) }
+    // Index of the reply that just arrived; only that one reads in word by word. History and
+    // replies scrolled back into view are shown as plain text.
+    var freshIndex by remember { mutableIntStateOf(-1) }
+    val haptics = rememberHaptics()
 
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) {
@@ -115,6 +145,7 @@ fun ChatBotScreen(
             try {
                 if (dispatcher != null) {
                     val response = dispatcher.processQuery(query, events, memories, shouldSpeak = true)
+                    freshIndex = messages.size
                     messages = messages + ChatMessage(response.message, false, response.actionLabel)
                     onSaveMessage(ChatHistoryEntity(role = "assistant", message = response.message))
                 } else {
@@ -164,31 +195,34 @@ fun ChatBotScreen(
                 }
 
                 if (ttsEngine?.isSpeaking == true) {
-                    IconButton(onClick = { ttsEngine.stop() }) {
+                    // Fixed size so the header does not grow when this appears.
+                    IconButton(onClick = { ttsEngine.stop() }, modifier = Modifier.size(34.dp)) {
                         Icon(Icons.Filled.VolumeMute, contentDescription = "Stop speaking", tint = Rose, modifier = Modifier.size(20.dp))
                     }
                 }
             }
         }
 
-        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Hairline))
-
-        // Chat Message History
+        // Chat Message History. No hard divider under the header: messages fade out where they
+        // meet it, and only once there is something scrolled up underneath.
         LazyColumn(
             state = listState,
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
+                .fadingEdges(top = 20.dp, showTop = listState.canScrollBackward)
                 .padding(horizontal = 16.dp),
             contentPadding = PaddingValues(vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             // The list only ever appends, so the index is a stable key; animateItemPlacement keeps
             // existing bubbles gliding up when the thinking row appears/disappears.
-            itemsIndexed(messages, key = { index, _ -> index }) { _, msg ->
+            itemsIndexed(messages, key = { index, _ -> index }) { index, msg ->
                 Box(modifier = Modifier.animateItemPlacement(ChittiMotion.settle())) {
                     GeminiChatBubble(
                         msg = msg,
+                        reveal = index == freshIndex,
+                        onRevealed = { if (freshIndex == index) freshIndex = -1 },
                         onSpeak = {
                             ttsEngine?.speak(msg.text)
                         }
@@ -210,8 +244,39 @@ fun ChatBotScreen(
             }
         }
 
+        // Suggestions until the first message, so an empty conversation shows what is possible.
+        AnimatedVisibility(
+            visible = messages.none { it.isUser } && !isThinking,
+            enter = fadeIn(tween(160)) + expandVertically(ChittiMotion.settle()),
+            exit = fadeOut(tween(120)) + shrinkVertically(ChittiMotion.settle())
+        ) {
+            // A plain scrolling Row: four chips need no laziness, and it always starts at the first.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                ChatSuggestions.forEachIndexed { index, suggestion ->
+                    ChipButton(
+                        label = suggestion.label,
+                        icon = suggestion.icon,
+                        tint = suggestion.tint,
+                        onClick = { sendMessage(suggestion.query) },
+                        modifier = Modifier.staggeredEntrance(index, stepMs = 40)
+                    )
+                }
+            }
+        }
+
         // Input Bar Area: a floating material with a light-catching top edge instead of a hard divider
-        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Hairline))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(Brush.horizontalGradient(listOf(Hairline, EdgeHighlight, Hairline)))
+        )
         Surface(
             modifier = Modifier.fillMaxWidth(),
             color = Surface1
@@ -256,23 +321,45 @@ fun ChatBotScreen(
                         cursorColor = Accent
                     ),
                     shape = RoundedCornerShape(12.dp),
-                    singleLine = true
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                    keyboardActions = KeyboardActions(onSend = { sendMessage(inputText) })
                 )
 
                 Spacer(modifier = Modifier.width(8.dp))
 
-                // Send Button
+                // Send: wakes up (fills with accent, glyph turns to face forward) as soon as there
+                // is something to send, so readiness is visible before the tap.
+                val canSend = inputText.isNotBlank() && !isThinking
                 val sendInteraction = remember { MutableInteractionSource() }
-                FilledIconButton(
-                    onClick = { sendMessage(inputText) },
-                    interactionSource = sendInteraction,
+                val sendFill by animateColorAsState(if (canSend) Accent else Surface2, ChittiMotion.settle(), label = "sendFill")
+                val sendGlyph by animateColorAsState(if (canSend) OnAccent else TextLow, ChittiMotion.settle(), label = "sendGlyph")
+                val sendTurn by animateFloatAsState(if (canSend) 0f else -35f, ChittiMotion.Settle, label = "sendTurn")
+                Box(
                     modifier = Modifier
                         .size(42.dp)
-                        .pressScale(sendInteraction, pressed = 0.9f),
-                    colors = IconButtonDefaults.filledIconButtonColors(containerColor = Accent, disabledContainerColor = Surface2),
-                    enabled = inputText.isNotBlank() && !isThinking
+                        .pressScale(sendInteraction, pressed = 0.88f)
+                        .clip(CircleShape)
+                        .background(sendFill)
+                        .border(1.dp, if (canSend) EdgeHighlight else Hairline, CircleShape)
+                        .clickable(
+                            interactionSource = sendInteraction,
+                            indication = null,
+                            enabled = canSend
+                        ) {
+                            haptics.press()
+                            sendMessage(inputText)
+                        },
+                    contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send", tint = Color.White, modifier = Modifier.size(18.dp))
+                    Icon(
+                        Icons.AutoMirrored.Filled.Send,
+                        contentDescription = "Send",
+                        tint = sendGlyph,
+                        modifier = Modifier
+                            .size(18.dp)
+                            .graphicsLayer { rotationZ = sendTurn }
+                    )
                 }
             }
         }
@@ -282,11 +369,15 @@ fun ChatBotScreen(
 @Composable
 fun GeminiChatBubble(
     msg: ChatMessage,
+    reveal: Boolean = false,
+    onRevealed: () -> Unit = {},
     onSpeak: () -> Unit = {}
 ) {
     val alignment = if (msg.isUser) Alignment.CenterEnd else Alignment.CenterStart
     val bgColor = if (msg.isUser) Accent else Surface2
-    val textColor = if (msg.isUser) Color.White else TextHigh
+    val textColor = if (msg.isUser) OnAccent else TextHigh
+    // Grow out of the tail corner: yours from the right, Chitti's from the left.
+    val origin = if (msg.isUser) TransformOrigin(1f, 1f) else TransformOrigin(0f, 1f)
 
     // Materialise from where it belongs: a short rise + fade + scale on a settle spring.
     val reduceMotion = rememberReducedMotion()
@@ -300,7 +391,7 @@ fun GeminiChatBubble(
             visibleState = shown,
             enter = fadeIn(tween(160)) +
                 slideInVertically(ChittiMotion.settle()) { it / 4 } +
-                scaleIn(ChittiMotion.Settle, initialScale = 0.96f)
+                scaleIn(ChittiMotion.Settle, initialScale = 0.9f, transformOrigin = origin)
         ) {
         Surface(
             shape = RoundedCornerShape(
@@ -325,22 +416,31 @@ fun GeminiChatBubble(
                     }
                 }
 
-                Text(
+                WordRevealText(
                     text = msg.text,
+                    animate = reveal && !msg.isUser,
+                    onRevealed = onRevealed,
                     color = textColor,
                     style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 20.sp)
                 )
 
                 if (!msg.isUser) {
+                    // Compact and end-aligned without forcing the bubble to full width, so a short
+                    // reply gets a short bubble.
+                    val listenInteraction = remember { MutableInteractionSource() }
                     Row(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 4.dp),
-                        horizontalArrangement = Arrangement.End
+                            .align(Alignment.End)
+                            .padding(top = 6.dp)
+                            .pressScale(listenInteraction, pressed = 0.94f)
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable(interactionSource = listenInteraction, indication = null, onClick = onSpeak)
+                            .padding(horizontal = 6.dp, vertical = 3.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        IconButton(onClick = onSpeak, modifier = Modifier.size(24.dp)) {
-                            Icon(Icons.Filled.PlayArrow, contentDescription = "Read aloud", tint = TextLow, modifier = Modifier.size(15.dp))
-                        }
+                        Icon(Icons.Filled.PlayArrow, contentDescription = null, tint = TextLow, modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text("Listen", style = MaterialTheme.typography.labelSmall, color = TextLow)
                     }
                 }
             }
