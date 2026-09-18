@@ -27,6 +27,7 @@ import com.owlcoders.chitti.db.CapturedEvent
 import com.owlcoders.chitti.db.entities.ChatHistoryEntity
 import com.owlcoders.chitti.db.entities.Memory
 import com.owlcoders.chitti.services.TtsEngine
+import com.owlcoders.chitti.ui.components.GeminiCircularProgressIndicator
 import com.owlcoders.chitti.ui.theme.*
 import kotlinx.coroutines.launch
 
