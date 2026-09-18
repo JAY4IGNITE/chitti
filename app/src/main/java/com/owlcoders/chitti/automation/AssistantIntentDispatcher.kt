@@ -6,6 +6,7 @@ import android.hardware.camera2.CameraManager
 import android.util.Log
 import com.owlcoders.chitti.ChittiApp
 import com.owlcoders.chitti.db.CapturedEvent
+import com.owlcoders.chitti.db.entities.Memory
 import com.owlcoders.chitti.services.TtsEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -52,6 +53,7 @@ class AssistantIntentDispatcher(
     suspend fun processQuery(
         query: String,
         events: List<CapturedEvent> = emptyList(),
+        memories: List<Memory> = emptyList(),
         shouldSpeak: Boolean = true
     ): AssistantResponse = withContext(Dispatchers.IO) {
         val trimmed = query.trim()
@@ -93,7 +95,7 @@ class AssistantIntentDispatcher(
         }
 
         // 2. Greetings & Politeness
-        if (lower.matches(Regex("^(hi|hello|hey|yo|namaste|good morning|good evening|good afternoon|good night)\\b.*"))) {
+        if (lower.matches(Regex("^(h+i+|h+e+l+o+|h+e+y+|yo+|namaste|hola|good (morning|evening|afternoon|night))\\b.*"))) {
             return@withContext reply(
                 "Hello! I'm Chitti. What can I do for you right now? You can say \"Open WhatsApp\", \"Open YouTube\", \"Remind me to call mom in 30 minutes\", or ask about your schedule.",
                 label = "Greeting"
@@ -110,7 +112,9 @@ class AssistantIntentDispatcher(
         }
 
         // 4. Capabilities / Help
-        if (lower.contains("what can you do") || Regex("\\bhelp\\b").containsMatchIn(lower) || lower == "features") {
+        if (lower.contains("what can you do") || lower.contains("what do you do") ||
+            lower.contains("how can you help") || lower == "help" || lower == "features"
+        ) {
             val message = "Here is what I can do for you:\n• Launch Apps: \"Open WhatsApp\", \"Open YouTube\", \"Open Camera\"\n• Reminders: \"Remind me to call mom in 30 minutes\"\n• Device Control: \"Turn on flashlight\", \"Turn off torch\"\n• Agenda & Tasks: \"What's pending today?\", \"My schedule\"\n• Local AI Q&A and instant voice responses."
             val spoken = "I can open apps like WhatsApp and YouTube, set reminders, control your flashlight, and manage your daily tasks."
             return@withContext reply(message, spoken, label = "Capabilities")
@@ -207,19 +211,45 @@ class AssistantIntentDispatcher(
             return@withContext reply(message, type = ActionCategory.TASK_SCHEDULE, label = "Schedule")
         }
 
-        // 12. General Assistant AI Q&A via ExtractionEngine / Gemma RAG
+        // 12. Anything else: answer it with the on-device model.
         val app = context.applicationContext as? ChittiApp
-        val extractionEngine = app?.extractionEngine
-        // The engine clamps internally as well; clamp here too so a pasted wall of text never
-        // reaches the prompt builder.
-        val ragResult = extractionEngine?.generateRagResponse(cleaned.take(300), events)
+        val engine = app?.extractionEngine
 
-        val finalResponse = if (ragResult != null && !ragResult.contains("I don't have that in my memory")) {
-            ragResult
-        } else {
-            "I'm Chitti, your on-device AI assistant. You can ask me to open apps like WhatsApp or YouTube, set reminders, manage your agenda, or toggle your flashlight."
+        // Questions explicitly about what the user has saved go through the memory lookup;
+        // everything else is a normal question and gets a normal answer.
+        val asksAboutMemory = Regex("\\b(my|i have|do i|did i|remember|saved|remind(ed)? me)\\b").containsMatchIn(lower)
+        if (asksAboutMemory && engine != null) {
+            val ragResult = engine.generateRagResponse(cleaned.take(300), events)
+            if (!ragResult.contains("I don't have that in my memory")) {
+                return@withContext reply(ragResult, label = "Memory")
+            }
         }
-        reply(finalResponse, label = "Assistant")
+
+        // Only hand the model the user's notes when the question is actually about them.
+        // Injecting context into every prompt made it answer general questions with
+        // "the provided text does not contain that", because it read every prompt as closed-book.
+        val answer = engine?.generateChatResponse(
+            query = cleaned,
+            contextEvents = if (asksAboutMemory) events else emptyList(),
+            memoryFacts = if (asksAboutMemory) memories.map { it.key to it.value } else emptyList()
+        )
+        if (!answer.isNullOrBlank()) {
+            Log.d(tag, "Answered from the on-device model")
+            return@withContext reply(answer, label = "Answer")
+        }
+
+        // The model is still loading, unavailable, or produced nothing. Say that honestly instead
+        // of printing the same feature list for every question.
+        Log.w(tag, "No model answer available for: $lower")
+        val fallback = when {
+            engine == null || !engine.isLlmLoaded() ->
+                "My on-device model isn't loaded, so I can only do actions right now. Try \"Open WhatsApp\", \"Remind me in 10 minutes\", or \"What's pending?\"."
+            memories.isEmpty() && events.isEmpty() ->
+                "I couldn't answer that one. I don't have anything saved about you yet, so ask me to open an app, set a reminder, or save a fact in Memory."
+            else ->
+                "I couldn't answer that one. Try rephrasing it, or ask about your agenda, a reminder, or opening an app."
+        }
+        reply(fallback, success = false, label = "No answer")
     }
 
     // ------------------------------------------------------------------------------------

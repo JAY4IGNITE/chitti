@@ -213,6 +213,67 @@ class ExtractionEngine(private val context: Context, modelPath: String = "/data/
         return "Got it! I will take care of \"$task\"$time."
     }
 
+    /**
+     * Answers a general question.
+     *
+     * This is deliberately NOT the memory-RAG prompt: that one is told to answer only from the
+     * user's task list and to say "I don't have that in my memory" otherwise, so with an empty
+     * agenda it refused every question. Here the model may answer from its own knowledge and use
+     * the user's context only when the question is actually about them.
+     *
+     * Returns null when the model is unavailable or produced nothing usable, so the caller can
+     * fall back rather than print a canned line as if it were an answer.
+     */
+    suspend fun generateChatResponse(
+        query: String,
+        contextEvents: List<CapturedEvent> = emptyList(),
+        memoryFacts: List<Pair<String, String>> = emptyList()
+    ): String? {
+        val llm = llmInference ?: return null
+        val safeQuery = clamp(query, MAX_QUERY_CHARS)
+        if (safeQuery.isBlank()) return null
+
+        val facts = memoryFacts.take(MAX_MEMORY_FACTS).joinToString("\n") {
+            "- ${clamp(it.first, 40)}: ${clamp(it.second, 60)}"
+        }
+        val tasks = contextEvents
+            .filter { it.status != "done" }
+            .take(MAX_CHAT_EVENTS)
+            .joinToString("\n") {
+                "- ${clamp(it.extractedWhat, 60).ifBlank { "Task" }} (${clamp(it.extractedWhen, 30).ifBlank { "no time set" }})"
+            }
+        val context = buildString {
+            if (facts.isNotBlank()) append("Notes:\n").append(facts)
+            if (tasks.isNotBlank()) append("Tasks:\n").append(tasks)
+        }
+
+        // This model file refuses general questions when it is addressed as an assistant:
+        // even a correct <start_of_turn> chat prompt with a worked example came back with
+        // "I am unable to provide information related to specific literary works". Plain
+        // completion format sidesteps the persona - the model simply continues the pattern.
+        val prompt = buildString {
+            append("Q: What is the capital of Japan?\n")
+            append("A: Tokyo.\n\n")
+            append("Q: Who wrote Hamlet?\n")
+            append("A: William Shakespeare.\n\n")
+            if (context.isNotBlank()) append(context).append("\n\n")
+            append("Q: ").append(safeQuery).append("\n")
+            append("A:")
+        }
+
+        val raw = runLlm(llm, prompt) ?: return null
+        val cleaned = raw
+            .substringBefore("\nQ:")
+            .substringBefore("<end_of_turn>")
+            .replace("<eos>", " ")
+            .removePrefix("A:")
+            .trim()
+            .trim('"')
+            .trim()
+        // A correct answer can be one character ("7"), so only blank output counts as no answer.
+        return cleaned.takeIf { it.isNotBlank() }
+    }
+
     suspend fun generateRagResponse(query: String, contextEvents: List<CapturedEvent>): String {
         val llm = llmInference
         val safeQuery = clamp(query, MAX_QUERY_CHARS)
@@ -276,6 +337,8 @@ class ExtractionEngine(private val context: Context, modelPath: String = "/data/
         private const val MAX_FIELD_CHARS = 120
         private const val MAX_QUERY_CHARS = 300
         private const val MAX_CONTEXT_EVENTS = 8
+        private const val MAX_CHAT_EVENTS = 6
+        private const val MAX_MEMORY_FACTS = 6
         private const val MAX_PROMPT_CHARS = 1900
         private const val MAX_PROMPT_TOKENS_EST = 720
 

@@ -114,7 +114,7 @@ fun ChatBotScreen(
         scope.launch {
             try {
                 if (dispatcher != null) {
-                    val response = dispatcher.processQuery(query, events, shouldSpeak = true)
+                    val response = dispatcher.processQuery(query, events, memories, shouldSpeak = true)
                     messages = messages + ChatMessage(response.message, false, response.actionLabel)
                     onSaveMessage(ChatHistoryEntity(role = "assistant", message = response.message))
                 } else {

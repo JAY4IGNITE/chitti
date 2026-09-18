@@ -95,6 +95,7 @@ class MainActivity : ComponentActivity() {
 
                 // Assistant Voice State
                 val latestEvents = remember { mutableStateOf<List<com.owlcoders.chitti.db.CapturedEvent>>(emptyList()) }
+                val latestMemories = remember { mutableStateOf<List<Memory>>(emptyList()) }
                 // Incremented whenever the user starts a new voice session or dismisses the overlay;
                 // a processQuery() that finishes for an older generation is discarded.
                 var queryGen by remember { mutableIntStateOf(0) }
@@ -116,7 +117,7 @@ class MainActivity : ComponentActivity() {
                             val gen = ++queryGen
                             scope.launch {
                                 val response = try {
-                                    dispatcher.processQuery(finalQuery, latestEvents.value, shouldSpeak = true)
+                                    dispatcher.processQuery(finalQuery, latestEvents.value, latestMemories.value, shouldSpeak = true)
                                 } catch (t: Throwable) {
                                     Log.e("ChittiMain", "processQuery failed: ${t.message}", t)
                                     AssistantResponse(
@@ -216,6 +217,7 @@ class MainActivity : ComponentActivity() {
                 val tasks by app.database.taskDao().getAllTasks().collectAsState(initial = emptyList())
                 val notifications by app.database.notificationDao().getAllNotifications().collectAsState(initial = emptyList())
                 val memories by app.database.memoryDao().getAllMemories().collectAsState(initial = emptyList())
+                SideEffect { latestMemories.value = memories }
                 val memoryCategories by app.database.memoryDao().getCategories().collectAsState(initial = emptyList())
                 val automationHistory by app.database.automationHistoryDao().getRecentHistory(100).collectAsState(initial = emptyList())
                 val chatHistory by app.database.chatHistoryDao().getAllMessages().collectAsState(initial = emptyList())
@@ -273,7 +275,7 @@ class MainActivity : ComponentActivity() {
                                         },
                                         onQuickAction = { actionQuery ->
                                             scope.launch {
-                                                val resp = dispatcher.processQuery(actionQuery, events, shouldSpeak = true)
+                                                val resp = dispatcher.processQuery(actionQuery, events, memories, shouldSpeak = true)
                                                 currentAssistantResponse = resp
                                                 transcript = actionQuery
                                                 voiceState = VoiceAssistantState.RESULT
