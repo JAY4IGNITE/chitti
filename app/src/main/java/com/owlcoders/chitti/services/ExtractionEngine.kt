@@ -130,10 +130,10 @@ class ExtractionEngine(private val context: Context, modelPath: String = "/data/
                 lower.contains("lab") || lower.contains("record") || lower.contains("project") ||
                 lower.contains("presentation") || lower.contains("standup") || lower.contains("schedule")
 
-        val hasTimeIndicator = lower.contains("tomorrow") || lower.contains("today") ||
-                lower.contains("repu") || lower.contains("am") || lower.contains("pm") ||
-                lower.contains("lopu") || lower.contains("ki") || lower.contains("by ") ||
-                lower.contains("at ") || Regex("\\b\\d{1,2}(?::\\d{2})?\\s*(am|pm)\\b").containsMatchIn(lower) ||
+        // Whole-word matching: the old contains("am")/contains("ki") matched inside
+        // ordinary words ("amazing", "kiraana"), marking nearly every message as timed.
+        val hasTimeIndicator = Regex("\\b(tomorrow|today|repu|lopu|ki|by|at)\\b").containsMatchIn(lower) ||
+                Regex("\\b\\d{1,2}(?::\\d{2})?\\s*(am|pm)\\b").containsMatchIn(lower) ||
                 Regex("\\b\\d{1,2}(st|nd|rd|th)\\b").containsMatchIn(lower)
 
         if (!hasTaskIndicator && !hasTimeIndicator && isCasual) {

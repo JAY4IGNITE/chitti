@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 
 /**
  * Receives alarm broadcasts and shows reminder notifications.
@@ -14,19 +15,26 @@ import androidx.core.app.NotificationCompat
 class ReminderReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val title = intent.getStringExtra("title") ?: "Chitti Reminder"
+
+        // Android 13+: notify() without POST_NOTIFICATIONS throws SecurityException,
+        // which in a BroadcastReceiver crashes the whole app.
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS)
+            != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
         
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                "chitti_reminders",
-                "Chitti Reminders",
-                NotificationManager.IMPORTANCE_HIGH
-            ).apply {
-                description = "Reminders set via Chitti"
-            }
-            notificationManager.createNotificationChannel(channel)
+        val channel = NotificationChannel(
+            "chitti_reminders",
+            "Chitti Reminders",
+            NotificationManager.IMPORTANCE_HIGH
+        ).apply {
+            description = "Reminders set via Chitti"
         }
+        notificationManager.createNotificationChannel(channel)
         
         val notification = NotificationCompat.Builder(context, "chitti_reminders")
             .setSmallIcon(android.R.drawable.ic_dialog_info)

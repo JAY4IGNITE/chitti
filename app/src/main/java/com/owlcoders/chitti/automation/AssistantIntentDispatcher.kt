@@ -25,6 +25,7 @@ enum class ActionCategory {
     DOCUMENT_SEARCH,
     FILE_SEARCH,
     TASK_SCHEDULE,
+    TYPING,
     CONVERSATION
 }
 
@@ -156,6 +157,36 @@ class AssistantIntentDispatcher(
                 actionSuccess = appResult.success,
                 actionLabel = appResult.appName ?: "App"
             )
+        }
+
+        // 6.5. Typing Action: "type ..."
+        if (lower.startsWith("type ")) {
+            val textToType = trimmed.substring(5).trim() // Keep original casing
+            if (textToType.isNotEmpty()) {
+                val a11yService = com.owlcoders.chitti.services.ChittiAccessibilityService.instance
+                if (a11yService != null) {
+                    a11yService.typeTextGlobal(textToType)
+                    val reply = "Typing: $textToType"
+                    if (shouldSpeak) ttsEngine.speak(reply)
+                    return@withContext AssistantResponse(
+                        message = reply,
+                        spokenText = reply,
+                        actionType = ActionCategory.TYPING,
+                        actionSuccess = true,
+                        actionLabel = "Typing Action"
+                    )
+                } else {
+                    val reply = "Accessibility service is not enabled. I cannot type right now."
+                    if (shouldSpeak) ttsEngine.speak(reply)
+                    return@withContext AssistantResponse(
+                        message = reply,
+                        spokenText = reply,
+                        actionType = ActionCategory.TYPING,
+                        actionSuccess = false,
+                        actionLabel = "Typing Failed"
+                    )
+                }
+            }
         }
 
         // 7. Flashlight / Torch Intent: "turn on flashlight", "toggle flashlight", "torch on"

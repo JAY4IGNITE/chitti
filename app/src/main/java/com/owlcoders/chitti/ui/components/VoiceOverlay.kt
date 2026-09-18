@@ -156,8 +156,9 @@ fun GeminiVoiceOverlay(
                             Text(
                                 text = if (transcript.isNotBlank()) "\"$transcript\"" else "Say \"Open WhatsApp\", \"Open YouTube\", or \"Find documents\"...",
                                 style = MaterialTheme.typography.headlineMedium.copy(
-                                    fontSize = if (transcript.length > 35) 18.sp else 22.sp,
-                                    lineHeight = 28.sp
+                                    fontSize = if (transcript.length > 35) 18.sp else 24.sp,
+                                    lineHeight = 32.sp,
+                                    fontWeight = FontWeight.Medium
                                 ),
                                 color = if (transcript.isNotBlank()) TextPrimary else TextMuted,
                                 textAlign = TextAlign.Center
@@ -307,10 +308,10 @@ fun AudioWaveformVisualizer(rmsLevel: Float) {
                 )
             )
 
-            val rawHeight = (12.dp + (44 * rmsLevel * animatedFactor).dp).coerceIn(8.dp, 58.dp)
+            val rawHeight = (16.dp + (56 * rmsLevel * animatedFactor).dp).coerceIn(8.dp, 64.dp)
             val barHeight by animateDpAsState(
                 targetValue = rawHeight,
-                animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow)
+                animationSpec = spring(dampingRatio = Spring.DampingRatioLowBouncy, stiffness = Spring.StiffnessLow)
             )
 
             val barColor = when (i % 4) {
@@ -322,10 +323,10 @@ fun AudioWaveformVisualizer(rmsLevel: Float) {
 
             Box(
                 modifier = Modifier
-                    .width(6.dp)
+                    .width(8.dp)
                     .height(barHeight)
                     .clip(CircleShape)
-                    .background(barColor)
+                    .background(Brush.verticalGradient(listOf(barColor.copy(alpha=0.7f), barColor)))
             )
         }
     }
@@ -365,8 +366,9 @@ fun GeminiPulsingOrb(state: VoiceAssistantState, onClick: () -> Unit) {
                 .background(
                     Brush.radialGradient(
                         colors = listOf(
-                            GeminiCyan.copy(alpha = 0.4f),
-                            GeminiBlue.copy(alpha = 0.2f),
+                            GeminiCyan.copy(alpha = 0.5f),
+                            GeminiBlue.copy(alpha = 0.3f),
+                            GeminiPurple.copy(alpha = 0.1f),
                             Color.Transparent
                         )
                     )

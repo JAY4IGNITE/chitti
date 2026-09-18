@@ -61,6 +61,7 @@ sealed class Screen(val route: String, val icon: ImageVector, val label: String)
     object Memory : Screen("memory", Icons.Filled.Psychology, "Memory")
     object AiLab : Screen("ailab", Icons.Filled.Science, "AI Lab")
     object Settings : Screen("settings", Icons.Filled.Settings, "Settings")
+    object Profile : Screen("profile", Icons.Filled.Person, "Profile")
 }
 
 class MainActivity : ComponentActivity() {
@@ -109,10 +110,10 @@ class MainActivity : ComponentActivity() {
                                 voiceState = VoiceAssistantState.SPEAKING
                             }
                         },
-                        onRmsChanged = { rms ->
+                        onRmsLevel = { rms ->
                             rmsLevel = rms
                         },
-                        onError = { errMsg ->
+                        onErrorMessage = { errMsg ->
                             Log.w("ChittiMain", "STT Error: $errMsg")
                             if (voiceState == VoiceAssistantState.LISTENING) {
                                 voiceState = VoiceAssistantState.RESULT
@@ -196,11 +197,19 @@ class MainActivity : ComponentActivity() {
                 LaunchedEffect(automationHistory) { automationHistoryCount = automationHistory.size }
 
                 var hasNotificationAccess by remember { mutableStateOf(isNotificationServiceEnabled()) }
-                var previewMode by remember { mutableStateOf(false) }
+                
+                // Onboarding state
+                var isOnboardingComplete by remember { 
+                    mutableStateOf(
+                        com.owlcoders.chitti.ui.screens.checkMicPermission(context) &&
+                        com.owlcoders.chitti.ui.screens.checkNotificationPermission(context) &&
+                        com.owlcoders.chitti.ui.screens.checkAccessibilityPermission()
+                    ) 
+                }
 
                 // Main App Structure
                 Box(modifier = Modifier.fillMaxSize().background(GeminiDarkBg)) {
-                    if (hasNotificationAccess || previewMode) {
+                    if (isOnboardingComplete) {
                         ChittiScaffold(
                             navController = navController,
                             onMicClick = { startVoiceInput() }
@@ -341,60 +350,18 @@ class MainActivity : ComponentActivity() {
                                         onClearMemories = { scope.launch { memories.forEach { app.database.memoryDao().deleteMemory(it) } } }
                                     )
                                 }
+
+                                composable(Screen.Profile.route) {
+                                    com.owlcoders.chitti.ui.settings.ProfileScreen()
+                                }
                             }
                         }
                     } else {
-                        // Onboarding Notification permission request
-                        Surface(modifier = Modifier.fillMaxSize(), color = GeminiDarkBg) {
-                            Column(
-                                modifier = Modifier.fillMaxSize().padding(24.dp),
-                                verticalArrangement = Arrangement.Center,
-                                horizontalAlignment = Alignment.CenterHorizontally
-                            ) {
-                                Box(
-                                    modifier = Modifier.size(72.dp).clip(CircleShape).background(Brush.radialGradient(listOf(GeminiCyan, GeminiBlue))),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(Icons.Filled.AutoAwesome, contentDescription = null, tint = Color.White, modifier = Modifier.size(36.dp))
-                                }
-                                Spacer(modifier = Modifier.height(20.dp))
-                                Text("Chitti Assistant", style = MaterialTheme.typography.headlineLarge, color = TextPrimary, fontWeight = FontWeight.Bold)
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text("Your On-Device AI Personal Mobile Assistant", style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
-                                Spacer(modifier = Modifier.height(32.dp))
-                                Text(
-                                    "Chitti needs Notification Listener access to automatically organize tasks and commitments for you.",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = TextMuted,
-                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                                )
-                                Spacer(modifier = Modifier.height(24.dp))
-                                Button(
-                                    onClick = {
-                                        val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
-                                        startActivity(intent)
-                                    },
-                                    colors = ButtonDefaults.buttonColors(containerColor = GeminiBlue),
-                                    shape = RoundedCornerShape(14.dp),
-                                    modifier = Modifier.fillMaxWidth().height(48.dp)
-                                ) {
-                                    Text("Enable Notification Access", fontWeight = FontWeight.SemiBold)
-                                }
-                                Spacer(modifier = Modifier.height(12.dp))
-                                OutlinedButton(
-                                    onClick = { hasNotificationAccess = isNotificationServiceEnabled() },
-                                    shape = RoundedCornerShape(14.dp),
-                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = GeminiCyan),
-                                    modifier = Modifier.fillMaxWidth().height(48.dp)
-                                ) {
-                                    Text("I've Enabled It — Continue")
-                                }
-                                Spacer(modifier = Modifier.height(12.dp))
-                                TextButton(onClick = { previewMode = true }) {
-                                    Text("Explore Assistant (Preview Mode)", color = TextSecondary)
-                                }
+                        com.owlcoders.chitti.ui.screens.PermissionsOnboardingScreen(
+                            onAllPermissionsGranted = {
+                                isOnboardingComplete = true
                             }
-                        }
+                        )
                     }
 
                     // Global Gemini Voice Overlay
@@ -461,7 +428,7 @@ fun ChittiScaffold(
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
 
-    val drawerScreens = listOf(Screen.Inbox, Screen.Dashboard, Screen.Automation, Screen.Memory, Screen.AiLab, Screen.Settings)
+    val drawerScreens = listOf(Screen.Inbox, Screen.Dashboard, Screen.Automation, Screen.Memory, Screen.AiLab, Screen.Settings, Screen.Profile)
     var showMoreMenu by remember { mutableStateOf(false) }
 
     val infiniteTransition = rememberInfiniteTransition()

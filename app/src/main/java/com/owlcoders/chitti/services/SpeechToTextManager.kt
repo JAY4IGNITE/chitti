@@ -19,8 +19,8 @@ class SpeechToTextManager(
     private val context: Context,
     private val onPartialResult: (String) -> Unit = {},
     private val onFinalResult: (String) -> Unit = {},
-    private val onRmsChanged: (Float) -> Unit = {},
-    private val onError: (String) -> Unit = {},
+    private val onRmsLevel: (Float) -> Unit = {},
+    private val onErrorMessage: (String) -> Unit = {},
     private val onStateChange: (SpeechState) -> Unit = {}
 ) {
     private val tag = "ChittiSTT"
@@ -47,8 +47,9 @@ class SpeechToTextManager(
         }
 
         override fun onRmsChanged(rmsdB: Float) {
+            // NOTE: must not be named like the override below, otherwise the call recurses into itself (StackOverflowError).
             val normalized = ((rmsdB + 2f) / 12f).coerceIn(0.05f, 1f)
-            onRmsChanged(normalized)
+            onRmsLevel(normalized)
         }
 
         override fun onBufferReceived(buffer: ByteArray?) {}
@@ -72,7 +73,7 @@ class SpeechToTextManager(
             }
             Log.w(tag, "Speech recognition error: $message (code $error)")
             onStateChange(SpeechState.ERROR)
-            onError(message)
+            onErrorMessage(message)
         }
 
         override fun onResults(results: Bundle?) {
@@ -86,7 +87,7 @@ class SpeechToTextManager(
                 hasTriggeredFinal = true
                 onFinalResult(recognizedText)
             } else {
-                onError("Could not hear anything clearly.")
+                onErrorMessage("Could not hear anything clearly.")
             }
         }
 
@@ -141,7 +142,7 @@ class SpeechToTextManager(
                 if (!SpeechRecognizer.isRecognitionAvailable(context)) {
                     val msg = "Speech recognition is not available on this device."
                     Log.w(tag, msg)
-                    onError(msg)
+                    onErrorMessage(msg)
                     return@runOnMain
                 }
 
@@ -173,7 +174,7 @@ class SpeechToTextManager(
                 Log.d(tag, "Speech recognition successfully started with locale $langTag")
             } catch (e: Exception) {
                 Log.e(tag, "Failed to start listening: ${e.message}", e)
-                onError("Failed to start microphone: ${e.message}")
+                onErrorMessage("Failed to start microphone: ${e.message}")
             }
         }
     }

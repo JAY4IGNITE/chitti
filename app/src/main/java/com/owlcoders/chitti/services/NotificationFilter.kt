@@ -17,6 +17,14 @@ object NotificationFilter {
     // Regex for basic date patterns like 12/05, Oct 23, Monday
     private val dateRegex = Regex("""\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{1,2}\b|\b\d{1,2}/\d{1,2}(/\d{2,4})?\b|\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b""", RegexOption.IGNORE_CASE)
 
+    // Precompiled whole-word regex: substring matching caused massive over-triggering
+    // ("unda" matched "Sunday"/"under", "kal" matched "kalyan", "due" matched "residue"),
+    // sending far more than the intended ~10% of messages to the LLM and wasting battery.
+    private val keywordRegex = Regex(
+        "\\b(" + keywords.joinToString("|") { Regex.escape(it) } + ")\\b",
+        RegexOption.IGNORE_CASE
+    )
+
     /**
      * Checks if a notification text should be processed further by the LLM.
      * Returns true if it contains any of the target keywords or date/time patterns.
@@ -26,8 +34,8 @@ object NotificationFilter {
         
         val lowerText = text.lowercase()
 
-        // 1. Check keywords
-        if (keywords.any { lowerText.contains(it) }) {
+        // 1. Check keywords (whole words only)
+        if (keywordRegex.containsMatchIn(lowerText)) {
             return true
         }
 

@@ -20,9 +20,10 @@ import com.owlcoders.chitti.db.entities.*
         Memory::class,
         Person::class,
         AutomationHistory::class,
-        ChatHistoryEntity::class
+        ChatHistoryEntity::class,
+        UserProfile::class
     ],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -37,6 +38,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun personDao(): PersonDao
     abstract fun automationHistoryDao(): AutomationHistoryDao
     abstract fun chatHistoryDao(): ChatHistoryDao
+    abstract fun userProfileDao(): UserProfileDao
 
     companion object {
         @Volatile

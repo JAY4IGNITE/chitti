@@ -38,7 +38,7 @@ import com.owlcoders.chitti.ui.theme.GeminiPurple
  */
 @Composable
 fun GeminiCircularProgressIndicator(
-    modifier: Modifier = Modifier.size(24.dp),
+    modifier: Modifier = Modifier,
     strokeWidth: Dp = 2.5.dp,
     color: Color? = null
 ) {
@@ -91,8 +91,6 @@ fun GeminiCircularProgressIndicator(
 @Composable
 fun GeminiLinearProgressIndicator(
     modifier: Modifier = Modifier
-        .fillMaxWidth()
-        .height(4.dp)
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "GeminiLinear")
     val offsetFraction by infiniteTransition.animateFloat(
@@ -107,6 +105,8 @@ fun GeminiLinearProgressIndicator(
 
     Box(
         modifier = modifier
+            .fillMaxWidth()
+            .height(4.dp)
             .clip(RoundedCornerShape(2.dp))
             .background(GeminiBorder)
     ) {

@@ -10,6 +10,8 @@ import android.provider.CalendarContract
 import android.provider.Settings
 import android.util.Log
 import com.owlcoders.chitti.db.AppDatabase
+import com.owlcoders.chitti.security.LinkGuardActivity
+import com.owlcoders.chitti.security.LinkScanner
 import com.owlcoders.chitti.db.entities.AutomationHistory
 import com.owlcoders.chitti.db.entities.Memory
 import kotlinx.coroutines.Dispatchers
@@ -113,24 +115,46 @@ class ActionExecutor(
     }
 
     private fun openDeepLink(url: String): ActionResult {
-        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        context.startActivity(intent)
-        return ActionResult(true, "Opened link: $url")
+        // LinkGuard: every URL is scanned on-device before it is allowed to open.
+        // SAFE links pass straight through inside LinkGuardActivity with no UI;
+        // risky links show the warning interstitial instead of opening blindly.
+        val verdict = LinkScanner.scan(url)
+        LinkGuardActivity.open(context, url)
+        return if (verdict.level == LinkScanner.RiskLevel.SAFE) {
+            ActionResult(true, "Opened link: $url (LinkGuard: safe)")
+        } else {
+            ActionResult(true, "LinkGuard warning shown (${verdict.level}, score ${verdict.score}): $url")
+        }
     }
 
     private fun createReminder(title: String, triggerTime: Long): ActionResult {
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        val intent = Intent("com.owlcoders.chitti.REMINDER").apply {
+        // Explicit intent: implicit broadcasts to a non-exported receiver are not delivered
+        // on Android 8+, which silently broke reminders.
+        val intent = Intent(context, ReminderReceiver::class.java).apply {
+            action = "com.owlcoders.chitti.REMINDER"
             putExtra("title", title)
         }
+        // Unique request code per (title, time): two reminders with the same title no
+        // longer overwrite each other's PendingIntent.
+        val requestCode = (title.hashCode() * 31) + (triggerTime and 0x7FFFFFFF).toInt()
         val pendingIntent = PendingIntent.getBroadcast(
             context,
-            title.hashCode(),
+            requestCode,
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent)
+        // SCHEDULE_EXACT_ALARM can be revoked by the user on Android 12+; fall back to an
+        // inexact alarm instead of crashing with SecurityException.
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= 31 && !alarmManager.canScheduleExactAlarms()) {
+                alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent)
+                return ActionResult(true, "Reminder set (inexact — exact alarms not permitted): $title")
+            }
+            alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent)
+        } catch (e: SecurityException) {
+            alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerTime, pendingIntent)
+        }
         return ActionResult(true, "Reminder set: $title")
     }
 

@@ -25,7 +25,7 @@ import com.owlcoders.chitti.ui.theme.*
 import kotlinx.coroutines.launch
 
 @Composable
-fun ChittiCard(event: CapturedEvent, onDelete: () -> Unit = {}, modifier: Modifier = Modifier) {
+fun ChittiCard(event: CapturedEvent, modifier: Modifier = Modifier, onDelete: () -> Unit = {}) {
     var generatedReply by remember { mutableStateOf<String?>(null) }
     var isGeneratingReply by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()

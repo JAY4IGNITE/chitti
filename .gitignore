@@ -60,3 +60,8 @@ Thumbs.db
 # Gradle wrapper (do not ignore wrapper jar)
 !gradle/wrapper/gradle-wrapper.jar
 
+# Agent and AI IDE files
+.agents/
+.claude/
+brain/
+skills-lock.json
