@@ -2,20 +2,58 @@ package com.owlcoders.chitti.ui.settings
 
 import android.content.Intent
 import android.provider.Settings
-import androidx.compose.foundation.layout.*
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AlternateEmail
+import androidx.compose.material.icons.filled.Cake
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Phone
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.owlcoders.chitti.db.AppDatabase
 import com.owlcoders.chitti.db.entities.UserProfile
+import com.owlcoders.chitti.ui.components.ChittiSurfaceCard
+import com.owlcoders.chitti.ui.components.ChittiTextField
+import com.owlcoders.chitti.ui.components.PrimaryButton
+import com.owlcoders.chitti.ui.components.ScreenHeader
+import com.owlcoders.chitti.ui.components.ScreenScaffold
+import com.owlcoders.chitti.ui.components.SecondaryButton
+import com.owlcoders.chitti.ui.components.SectionLabel
+import com.owlcoders.chitti.ui.components.Space
+import com.owlcoders.chitti.ui.components.StatusPill
+import com.owlcoders.chitti.ui.components.staggeredEntrance
+import com.owlcoders.chitti.ui.theme.Accent
+import com.owlcoders.chitti.ui.theme.Mint
+import com.owlcoders.chitti.ui.theme.TextHigh
+import com.owlcoders.chitti.ui.theme.TextMid
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProfileScreen() {
     val context = LocalContext.current
@@ -55,132 +93,156 @@ fun ProfileScreen() {
         }
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(title = { Text("Personal Profile") })
-        }
-    ) { paddingValues ->
+    ScreenScaffold {
+        ScreenHeader(
+            title = "Profile",
+            subtitle = "Used by Chitti's autofill to complete forms for you"
+        )
+
         if (isLoading) {
             Box(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(paddingValues),
-                contentAlignment = androidx.compose.ui.Alignment.Center
+                    .fillMaxWidth()
+                    .weight(1f),
+                contentAlignment = Alignment.Center
             ) {
-                CircularProgressIndicator()
+                CircularProgressIndicator(color = Accent)
             }
         } else {
             Column(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(paddingValues)
-                    .padding(16.dp)
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
+                    .padding(bottom = 24.dp)
             ) {
-                Text(
-                    text = "Chitti will use these details to help you auto-fill forms securely.",
-                    style = MaterialTheme.typography.bodyMedium
-                )
-
-                OutlinedTextField(
-                    value = firstName,
-                    onValueChange = { firstName = it },
-                    label = { Text("First Name") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                OutlinedTextField(
-                    value = lastName,
-                    onValueChange = { lastName = it },
-                    label = { Text("Last Name") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                OutlinedTextField(
-                    value = email,
-                    onValueChange = { email = it },
-                    label = { Text("Email") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                OutlinedTextField(
-                    value = phoneNumber,
-                    onValueChange = { phoneNumber = it },
-                    label = { Text("Phone Number") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                OutlinedTextField(
-                    value = address,
-                    onValueChange = { address = it },
-                    label = { Text("Address") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                OutlinedTextField(
-                    value = dob,
-                    onValueChange = { dob = it },
-                    label = { Text("Date of Birth") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                Button(
-                    onClick = {
-                        coroutineScope.launch {
-                            val newProfile = UserProfile(
-                                id = 1,
-                                firstName = firstName,
-                                lastName = lastName,
-                                email = email,
-                                phoneNumber = phoneNumber,
-                                address = address,
-                                dateOfBirth = dob
-                            )
-                            db.userProfileDao().insertOrUpdateProfile(newProfile)
-                            showSavedMessage = true
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth()
+                SectionLabel("Your details")
+                ChittiSurfaceCard(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = Space.gutter)
+                        .staggeredEntrance(0)
                 ) {
-                    Text("Save Profile")
-                }
+                    Column(verticalArrangement = Arrangement.spacedBy(Space.m)) {
+                        ChittiTextField(
+                            value = firstName,
+                            onValueChange = { firstName = it },
+                            placeholder = "First name",
+                            label = "First name",
+                            leadingIcon = Icons.Filled.Person
+                        )
+                        ChittiTextField(
+                            value = lastName,
+                            onValueChange = { lastName = it },
+                            placeholder = "Last name",
+                            label = "Last name",
+                            leadingIcon = Icons.Filled.Person
+                        )
+                        ChittiTextField(
+                            value = email,
+                            onValueChange = { email = it },
+                            placeholder = "you@example.com",
+                            label = "Email",
+                            leadingIcon = Icons.Filled.AlternateEmail
+                        )
+                        ChittiTextField(
+                            value = phoneNumber,
+                            onValueChange = { phoneNumber = it },
+                            placeholder = "Phone number",
+                            label = "Phone",
+                            leadingIcon = Icons.Filled.Phone
+                        )
+                        ChittiTextField(
+                            value = dob,
+                            onValueChange = { dob = it },
+                            placeholder = "DD/MM/YYYY",
+                            label = "Date of birth",
+                            leadingIcon = Icons.Filled.Cake
+                        )
+                        ChittiTextField(
+                            value = address,
+                            onValueChange = { address = it },
+                            placeholder = "Street, city, postcode",
+                            label = "Address",
+                            leadingIcon = Icons.Filled.Home,
+                            singleLine = false
+                        )
+                    }
 
-                if (showSavedMessage) {
-                    Text(
-                        text = "Profile saved successfully!",
-                        color = MaterialTheme.colorScheme.primary,
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
+                    Spacer(Modifier.height(Space.l))
 
-                Spacer(modifier = Modifier.height(16.dp))
-                HorizontalDivider()
-                Spacer(modifier = Modifier.height(16.dp))
-
-                Text(
-                    text = "Enable system-wide Autofill to let Chitti fill forms inside other apps.",
-                    style = MaterialTheme.typography.bodyMedium
-                )
-
-                Button(
-                    onClick = {
-                        val intent = Intent(Settings.ACTION_REQUEST_SET_AUTOFILL_SERVICE)
-                        intent.data = android.net.Uri.parse("package:${context.packageName}")
-                        try {
-                            context.startActivity(intent)
-                        } catch (e: Exception) {
-                            try {
-                                context.startActivity(Intent(Settings.ACTION_SETTINGS))
-                            } catch (e2: Exception) {
-                                android.widget.Toast.makeText(context, "Could not open system settings", android.widget.Toast.LENGTH_SHORT).show()
+                    PrimaryButton(
+                        text = "Save profile",
+                        onClick = {
+                            coroutineScope.launch {
+                                val newProfile = UserProfile(
+                                    id = 1,
+                                    firstName = firstName,
+                                    lastName = lastName,
+                                    email = email,
+                                    phoneNumber = phoneNumber,
+                                    address = address,
+                                    dateOfBirth = dob
+                                )
+                                db.userProfileDao().insertOrUpdateProfile(newProfile)
+                                showSavedMessage = true
                             }
+                        },
+                        fill = true
+                    )
+
+                    AnimatedVisibility(
+                        visible = showSavedMessage,
+                        enter = fadeIn(),
+                        exit = fadeOut()
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = Space.m),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            StatusPill(text = "Profile saved", tint = Mint, icon = Icons.Filled.Check)
                         }
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
+                    }
+                }
+
+                SectionLabel("Autofill")
+                ChittiSurfaceCard(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = Space.gutter)
+                        .staggeredEntrance(1)
                 ) {
-                    Text("Enable Chitti Autofill")
+                    Text(
+                        text = "Chitti Autofill",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = TextHigh
+                    )
+                    Spacer(Modifier.height(Space.xs))
+                    Text(
+                        text = "Set Chitti as your system autofill service and it will fill these details into forms in other apps. The details never leave this device.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextMid
+                    )
+                    Spacer(Modifier.height(Space.l))
+                    SecondaryButton(
+                        text = "Open autofill settings",
+                        onClick = {
+                            val intent = Intent(Settings.ACTION_REQUEST_SET_AUTOFILL_SERVICE)
+                            intent.data = android.net.Uri.parse("package:${context.packageName}")
+                            try {
+                                context.startActivity(intent)
+                            } catch (e: Exception) {
+                                try {
+                                    context.startActivity(Intent(Settings.ACTION_SETTINGS))
+                                } catch (e2: Exception) {
+                                    android.widget.Toast.makeText(context, "Could not open system settings", android.widget.Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        },
+                        fill = true
+                    )
                 }
             }
         }

@@ -478,36 +478,24 @@ fun ChittiScaffold(
     val drawerScreens = listOf(Screen.Dashboard, Screen.Automation, Screen.Memory, Screen.AiLab, Screen.Settings, Screen.Profile)
     var showMoreMenu by remember { mutableStateOf(false) }
 
-    val reduceMotion = rememberReducedMotion()
-    val infiniteTransition = rememberInfiniteTransition(label = "micHalo")
-    val pulseScale by infiniteTransition.animateFloat(
-        initialValue = 1f,
-        targetValue = if (reduceMotion) 1f else 1.14f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1200, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        )
-    )
-
     Scaffold(
         containerColor = GeminiDarkBg,
         bottomBar = {
             Column {
-                // Light catching the top edge of the material instead of a hard divider
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(1.dp)
-                        .background(Brush.horizontalGradient(listOf(Color.Transparent, GeminiBorder, GeminiCyan.copy(alpha = 0.35f), GeminiBorder, Color.Transparent)))
+                        .background(Hairline)
                 )
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                color = GeminiSurface.copy(alpha = 0.96f)
+                color = Surface1
             ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                        .padding(horizontal = 8.dp, vertical = 8.dp),
                     horizontalArrangement = Arrangement.SpaceAround,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -537,45 +525,23 @@ fun ChittiScaffold(
                         }
                     )
 
-                    // 3. Center Glowing Gemini Assistant Mic Button
+                    // 3. Talk to Chitti
+                    val micInteraction = remember { MutableInteractionSource() }
                     Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier.offset(y = (-10).dp)
+                        modifier = Modifier
+                            .size(46.dp)
+                            .pressScale(micInteraction, pressed = 0.9f)
+                            .clip(CircleShape)
+                            .background(Accent)
+                            .clickable(interactionSource = micInteraction, indication = null, onClick = onMicClick),
+                        contentAlignment = Alignment.Center
                     ) {
-                        // Pulsing ambient halo
-                        Box(
-                            modifier = Modifier
-                                .size(58.dp)
-                                .scale(pulseScale)
-                                .clip(CircleShape)
-                                .background(
-                                    Brush.radialGradient(
-                                        listOf(GeminiCyan.copy(alpha = 0.5f), GeminiBlue.copy(alpha = 0.3f), Color.Transparent)
-                                    )
-                                )
+                        Icon(
+                            imageVector = Icons.Filled.Mic,
+                            contentDescription = "Talk to Chitti",
+                            tint = Color.White,
+                            modifier = Modifier.size(21.dp)
                         )
-
-                        val micInteraction = remember { MutableInteractionSource() }
-                        Surface(
-                            modifier = Modifier
-                                .size(52.dp)
-                                .pressScale(micInteraction, pressed = 0.9f)
-                                .clip(CircleShape)
-                                .clickable(interactionSource = micInteraction, indication = null, onClick = onMicClick),
-                            shape = CircleShape,
-                            color = GeminiSurfaceElevated,
-                            border = androidx.compose.foundation.BorderStroke(2.dp, GeminiGradient),
-                            shadowElevation = 10.dp
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Filled.Mic,
-                                    contentDescription = "Assistant Voice",
-                                    tint = GeminiCyan,
-                                    modifier = Modifier.size(26.dp)
-                                )
-                            }
-                        }
                     }
 
                     // 4. AI Chat
@@ -602,20 +568,20 @@ fun ChittiScaffold(
                                 .clickable(interactionSource = moreInteraction, indication = null) { showMoreMenu = true }
                                 .padding(horizontal = 10.dp, vertical = 6.dp)
                         ) {
-                            Icon(Icons.Filled.MoreHoriz, contentDescription = "More", tint = TextSecondary, modifier = Modifier.size(24.dp))
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text("More", style = MaterialTheme.typography.labelSmall, color = TextSecondary)
+                            Icon(Icons.Filled.MoreHoriz, contentDescription = "More", tint = TextMid, modifier = Modifier.size(21.dp))
+                            Spacer(modifier = Modifier.height(3.dp))
+                            Text("More", style = MaterialTheme.typography.labelSmall, color = TextMid)
                         }
 
                         DropdownMenu(
                             expanded = showMoreMenu,
                             onDismissRequest = { showMoreMenu = false },
-                            modifier = Modifier.background(GeminiSurfaceElevated).border(1.dp, GeminiBorder, RoundedCornerShape(12.dp))
+                            modifier = Modifier.background(Surface2).border(1.dp, Hairline, RoundedCornerShape(12.dp))
                         ) {
                             drawerScreens.forEach { screen ->
                                 DropdownMenuItem(
-                                    text = { Text(screen.label, color = TextPrimary) },
-                                    leadingIcon = { Icon(screen.icon, contentDescription = screen.label, tint = GeminiCyan) },
+                                    text = { Text(screen.label, style = MaterialTheme.typography.bodyMedium, color = TextHigh) },
+                                    leadingIcon = { Icon(screen.icon, contentDescription = screen.label, tint = TextMid, modifier = Modifier.size(18.dp)) },
                                     onClick = {
                                         showMoreMenu = false
                                         navController.navigate(screen.route) {
@@ -642,18 +608,20 @@ fun BottomNavItem(
     isSelected: Boolean,
     onClick: () -> Unit
 ) {
-    val tint by animateColorAsState(if (isSelected) GeminiCyan else TextSecondary, label = "navTint")
+    val tint by animateColorAsState(if (isSelected) Accent else TextMid, label = "navTint")
+    val pill by animateFloatAsState(if (isSelected) 1f else 0f, com.owlcoders.chitti.ui.components.ChittiMotion.Settle, label = "navPill")
     val interaction = remember { MutableInteractionSource() }
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
-            .pressScale(interaction, pressed = 0.92f)
+            .pressScale(interaction, pressed = 0.94f)
             .clip(RoundedCornerShape(12.dp))
+            .background(Accent.copy(alpha = 0.12f * pill))
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 6.dp)
+            .padding(horizontal = 14.dp, vertical = 7.dp)
     ) {
-        Icon(screen.icon, contentDescription = screen.label, tint = tint, modifier = Modifier.size(24.dp))
-        Spacer(modifier = Modifier.height(2.dp))
-        Text(screen.label, style = MaterialTheme.typography.labelSmall, color = tint, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal)
+        Icon(screen.icon, contentDescription = screen.label, tint = tint, modifier = Modifier.size(21.dp))
+        Spacer(modifier = Modifier.height(3.dp))
+        Text(screen.label, style = MaterialTheme.typography.labelSmall, color = tint, fontWeight = FontWeight.Medium)
     }
 }

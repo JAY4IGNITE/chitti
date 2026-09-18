@@ -23,6 +23,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -86,7 +87,7 @@ fun GeminiVoiceOverlay(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.65f * (1f - pulled))),
+                .background(Scrim.copy(alpha = 0.80f * (1f - pulled))),
             contentAlignment = Alignment.BottomCenter
         ) {
             // Top scrim dismiss area
@@ -108,7 +109,7 @@ fun GeminiVoiceOverlay(
             }
 
             // Bottom sheet: consumes clicks so inner interactions do not bubble to onDismiss
-            Column(
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .onSizeChanged { sheetHeightPx = it.height.toFloat().coerceAtLeast(1f) }
@@ -141,19 +142,35 @@ fun GeminiVoiceOverlay(
                         indication = null,
                         onClick = { /* consume */ }
                     )
-                    .clip(RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp))
-                    .background(GeminiDarkBg.copy(alpha = 0.97f))
-                    .border(1.dp, GeminiBorder.copy(alpha = 0.6f), RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp))
-                    .padding(horizontal = 24.dp, vertical = 20.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                    .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
+                    .background(Surface1)
+                    .border(1.dp, Hairline, RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
             ) {
+                // A single accent wash at the top edge; stronger while the mic is open.
+                val washAlpha by animateFloatAsState(
+                    if (state == VoiceAssistantState.LISTENING) 0.55f else 0.25f,
+                    label = "sheetWash"
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(160.dp)
+                        .graphicsLayer { alpha = washAlpha }
+                        .background(AmbientGlow)
+                )
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp, vertical = 20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
                 // Drag handle (the whole sheet is draggable; the handle is the affordance)
                 Box(
                     modifier = Modifier
                         .width(44.dp)
                         .height(4.dp)
                         .clip(CircleShape)
-                        .background(TextMuted.copy(alpha = 0.4f + 0.4f * pulled))
+                        .background(TextLow.copy(alpha = 0.5f + 0.4f * pulled))
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -167,10 +184,10 @@ fun GeminiVoiceOverlay(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         val dotColor by animateColorAsState(
                             when (state) {
-                                VoiceAssistantState.LISTENING -> GeminiCyan
-                                VoiceAssistantState.THINKING -> GeminiAmber
-                                VoiceAssistantState.SPEAKING -> GeminiGreen
-                                else -> GeminiBlue
+                                VoiceAssistantState.LISTENING -> Accent
+                                VoiceAssistantState.THINKING -> Amber
+                                VoiceAssistantState.SPEAKING -> Mint
+                                else -> TextLow
                             },
                             label = "stateDot"
                         )
@@ -188,15 +205,14 @@ fun GeminiVoiceOverlay(
                         ) { s ->
                             Text(
                                 text = when (s) {
-                                    VoiceAssistantState.LISTENING -> "Listening..."
-                                    VoiceAssistantState.THINKING -> "Thinking..."
-                                    VoiceAssistantState.SPEAKING -> "Chitti is speaking..."
-                                    VoiceAssistantState.RESULT -> "Assistant Action"
-                                    else -> "Assistant"
+                                    VoiceAssistantState.LISTENING -> "Listening"
+                                    VoiceAssistantState.THINKING -> "Working"
+                                    VoiceAssistantState.SPEAKING -> "Speaking"
+                                    VoiceAssistantState.RESULT -> "Result"
+                                    else -> "Chitti"
                                 },
                                 style = MaterialTheme.typography.labelMedium,
-                                color = TextSecondary,
-                                fontWeight = FontWeight.Medium
+                                color = TextMid
                             )
                         }
                     }
@@ -204,11 +220,11 @@ fun GeminiVoiceOverlay(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (state == VoiceAssistantState.SPEAKING) {
                             IconButton(onClick = onStopSpeech, modifier = Modifier.size(32.dp)) {
-                                Icon(Icons.Filled.VolumeMute, contentDescription = "Mute", tint = GeminiPink)
+                                Icon(Icons.Filled.VolumeMute, contentDescription = "Stop speaking", tint = Rose, modifier = Modifier.size(19.dp))
                             }
                         }
                         IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
-                            Icon(Icons.Filled.Close, contentDescription = "Close", tint = TextMuted)
+                            Icon(Icons.Filled.Close, contentDescription = "Close", tint = TextLow, modifier = Modifier.size(19.dp))
                         }
                     }
                 }
@@ -227,13 +243,9 @@ fun GeminiVoiceOverlay(
                         state == VoiceAssistantState.LISTENING -> {
                             Text(
                                 text = if (transcript.isNotBlank()) "\"$transcript\"" else "Say \"Open WhatsApp\", \"Remind me to call mom in 30 minutes\", or \"What's pending?\"",
-                                style = MaterialTheme.typography.headlineMedium.copy(
-                                    fontSize = if (transcript.length > 35) 18.sp else 24.sp,
-                                    lineHeight = 32.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    letterSpacing = (-0.2).sp
-                                ),
-                                color = if (transcript.isNotBlank()) TextPrimary else TextMuted,
+                                style = if (transcript.length > 35) MaterialTheme.typography.titleLarge
+                                    else MaterialTheme.typography.headlineMedium,
+                                color = if (transcript.isNotBlank()) TextHigh else TextLow,
                                 textAlign = TextAlign.Center
                             )
                         }
@@ -243,8 +255,7 @@ fun GeminiVoiceOverlay(
                                     status = LatticeStatus.WORKING,
                                     label = "Working on it",
                                     pattern = LatticePatterns.Orbit,
-                                    color = GeminiCyan,
-                                    glow = true,
+                                    color = Accent,
                                     cellSize = 8.dp,
                                     gap = 3.dp,
                                     fontSize = 15
@@ -253,7 +264,7 @@ fun GeminiVoiceOverlay(
                                 Text(
                                     text = "\"$transcript\"",
                                     style = MaterialTheme.typography.bodyMedium,
-                                    color = TextSecondary,
+                                    color = TextMid,
                                     textAlign = TextAlign.Center
                                 )
                             }
@@ -262,33 +273,18 @@ fun GeminiVoiceOverlay(
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 if (assistantResponse.actionLabel != null) {
                                     val ok = assistantResponse.actionSuccess
-                                    val tint = if (ok) GeminiGreen else GeminiAmber
-                                    Surface(
-                                        shape = RoundedCornerShape(10.dp),
-                                        color = tint.copy(alpha = 0.15f),
-                                        border = androidx.compose.foundation.BorderStroke(1.dp, tint.copy(alpha = 0.3f)),
-                                        modifier = Modifier.padding(bottom = 8.dp)
-                                    ) {
-                                        Row(
-                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Icon(
-                                                if (ok) Icons.Filled.CheckCircle else Icons.Filled.Info,
-                                                contentDescription = null,
-                                                tint = tint,
-                                                modifier = Modifier.size(14.dp)
-                                            )
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Text(assistantResponse.actionLabel, color = tint, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
-                                        }
-                                    }
+                                    StatusPill(
+                                        text = assistantResponse.actionLabel,
+                                        tint = if (ok) Mint else Amber,
+                                        icon = if (ok) Icons.Filled.CheckCircle else Icons.Filled.Info,
+                                        modifier = Modifier.padding(bottom = 10.dp)
+                                    )
                                 }
 
                                 Text(
                                     text = assistantResponse.message,
                                     style = MaterialTheme.typography.bodyLarge,
-                                    color = TextPrimary,
+                                    color = TextHigh,
                                     textAlign = TextAlign.Center,
                                     modifier = Modifier.padding(horizontal = 8.dp)
                                 )
@@ -317,10 +313,9 @@ fun GeminiVoiceOverlay(
                     GeminiPulsingOrb(state = state, onClick = onMicClick)
                 }
 
-                Spacer(modifier = Modifier.height(18.dp))
+                Spacer(modifier = Modifier.height(6.dp))
 
-                // Gemini Glowing Iridescent Bottom Lightbar
-                GeminiIridescentLightbar()
+                }
             }
         }
     }
@@ -332,9 +327,9 @@ fun AudioWaveformVisualizer(rmsLevel: Float) {
     val infiniteTransition = rememberInfiniteTransition(label = "waveform")
 
     Row(
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(7.dp),
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.height(64.dp)
+        modifier = Modifier.height(56.dp)
     ) {
         for (i in 0 until barCount) {
             val phaseOffset = (i * 100)
@@ -356,19 +351,14 @@ fun AudioWaveformVisualizer(rmsLevel: Float) {
                 label = "barHeight$i"
             )
 
-            val barColor = when (i % 4) {
-                0 -> GeminiBlue
-                1 -> GeminiCyan
-                2 -> GeminiPurple
-                else -> GeminiPink
-            }
-
+            // Centre bars read brightest, so the shape of the level is legible at a glance.
+            val emphasis = 1f - (kotlin.math.abs(i - (barCount - 1) / 2f) / barCount)
             Box(
                 modifier = Modifier
-                    .width(8.dp)
+                    .width(6.dp)
                     .height(barHeight)
                     .clip(CircleShape)
-                    .background(Brush.verticalGradient(listOf(barColor.copy(alpha = 0.7f), barColor)))
+                    .background(Accent.copy(alpha = 0.45f + 0.55f * emphasis))
             )
         }
     }
@@ -410,36 +400,15 @@ fun GeminiPulsingOrb(state: VoiceAssistantState, onClick: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
 
     Box(contentAlignment = Alignment.Center) {
-        // Outer ambient glow ring
+        // A single accent halo that breathes only while the mic or speech is live.
         Box(
             modifier = Modifier
-                .size(76.dp)
+                .size(78.dp)
                 .scale(rippleScale)
                 .clip(CircleShape)
                 .background(
                     Brush.radialGradient(
-                        colors = listOf(
-                            GeminiCyan.copy(alpha = 0.5f),
-                            GeminiBlue.copy(alpha = 0.3f),
-                            GeminiPurple.copy(alpha = 0.1f),
-                            Color.Transparent
-                        )
-                    )
-                )
-        )
-
-        // Inner harmonic glow
-        Box(
-            modifier = Modifier
-                .size(68.dp)
-                .scale(innerScale)
-                .clip(CircleShape)
-                .background(
-                    Brush.radialGradient(
-                        colors = listOf(
-                            GeminiPurple.copy(alpha = 0.35f),
-                            Color.Transparent
-                        )
+                        colors = listOf(Accent.copy(alpha = 0.30f), Accent.copy(alpha = 0.08f), Color.Transparent)
                     )
                 )
         )
@@ -447,14 +416,13 @@ fun GeminiPulsingOrb(state: VoiceAssistantState, onClick: () -> Unit) {
         // Main interactive mic button: feedback on press-down, springs back on release.
         Surface(
             modifier = Modifier
-                .size(60.dp)
+                .size(62.dp)
                 .pressScale(interaction, pressed = 0.9f)
                 .clip(CircleShape)
                 .clickable(interactionSource = interaction, indication = null, onClick = onClick),
             shape = CircleShape,
-            color = GeminiSurfaceElevated,
-            border = androidx.compose.foundation.BorderStroke(2.dp, GeminiGradient),
-            shadowElevation = 8.dp
+            color = if (state == VoiceAssistantState.LISTENING) Accent else Surface2,
+            border = androidx.compose.foundation.BorderStroke(1.dp, if (state == VoiceAssistantState.LISTENING) Accent else Hairline)
         ) {
             Box(contentAlignment = Alignment.Center) {
                 AnimatedContent(
@@ -468,47 +436,12 @@ fun GeminiPulsingOrb(state: VoiceAssistantState, onClick: () -> Unit) {
                             VoiceAssistantState.THINKING -> Icons.Filled.AutoAwesome
                             else -> Icons.Filled.Mic
                         },
-                        contentDescription = "Assistant Mic",
-                        tint = GeminiCyan,
-                        modifier = Modifier.size(28.dp)
+                        contentDescription = "Microphone",
+                        tint = if (state == VoiceAssistantState.LISTENING) Color.White else TextHigh,
+                        modifier = Modifier.size(25.dp)
                     )
                 }
             }
         }
     }
-}
-
-@Composable
-fun GeminiIridescentLightbar() {
-    val reduceMotion = rememberReducedMotion()
-    val infiniteTransition = rememberInfiniteTransition(label = "lightbar")
-    val gradientOffset by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = if (reduceMotion) 0f else 1000f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 2800, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "gradient"
-    )
-
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(3.5.dp)
-            .clip(CircleShape)
-            .background(
-                Brush.horizontalGradient(
-                    colors = listOf(
-                        GeminiCyan,
-                        GeminiBlue,
-                        GeminiPurple,
-                        GeminiPink,
-                        GeminiCyan
-                    ),
-                    startX = gradientOffset,
-                    endX = gradientOffset + 500f
-                )
-            )
-    )
 }

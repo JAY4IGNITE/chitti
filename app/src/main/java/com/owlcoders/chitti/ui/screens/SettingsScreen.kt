@@ -9,28 +9,74 @@ import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.DeleteForever
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Psychology
+import androidx.compose.material.icons.filled.RecordVoiceOver
+import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
-import com.owlcoders.chitti.ui.theme.LightScreenBg
-import com.owlcoders.chitti.ui.theme.LightScreenInk
+import com.owlcoders.chitti.ui.components.ChittiSurfaceCard
+import com.owlcoders.chitti.ui.components.CountUpText
+import com.owlcoders.chitti.ui.components.DangerButton
+import com.owlcoders.chitti.ui.components.HairlineDivider
+import com.owlcoders.chitti.ui.components.ListRow
+import com.owlcoders.chitti.ui.components.ScreenHeader
+import com.owlcoders.chitti.ui.components.ScreenScaffold
+import com.owlcoders.chitti.ui.components.SecondaryButton
+import com.owlcoders.chitti.ui.components.SectionLabel
+import com.owlcoders.chitti.ui.components.Space
+import com.owlcoders.chitti.ui.components.StatusPill
+import com.owlcoders.chitti.ui.components.staggeredEntrance
+import com.owlcoders.chitti.ui.theme.Accent
+import com.owlcoders.chitti.ui.theme.Amber
+import com.owlcoders.chitti.ui.theme.Hairline
+import com.owlcoders.chitti.ui.theme.Iris
+import com.owlcoders.chitti.ui.theme.Mint
+import com.owlcoders.chitti.ui.theme.Rose
+import com.owlcoders.chitti.ui.theme.Sky
+import com.owlcoders.chitti.ui.theme.Surface1
+import com.owlcoders.chitti.ui.theme.TextHigh
+import com.owlcoders.chitti.ui.theme.TextLow
+import com.owlcoders.chitti.ui.theme.TextMid
 
 @Composable
 fun SettingsScreen(
@@ -110,47 +156,35 @@ fun SettingsScreen(
         permissionLauncher.launch(permission)
     }
 
-    // Light screen: dark content colour so uncoloured Text/Icon read on white cards.
-    CompositionLocalProvider(LocalContentColor provides LightScreenInk) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(LightScreenBg)
-            .verticalScroll(rememberScrollState())
-    ) {
-        // Header
-        Box(
+    val totalItems = eventCount + taskCount + notificationCount + memoryCount +
+        chatMessageCount + automationHistoryCount
+
+    ScreenScaffold {
+        ScreenHeader(title = "Settings")
+
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(Color(0xFF37474F))
-                .padding(16.dp)
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
+                .padding(bottom = 24.dp)
         ) {
-            Text(
-                text = "⚙️ Settings & Privacy",
-                color = Color.White,
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(top = 16.dp)
-            )
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // PERMISSIONS SECTION
-        SectionHeader("Permissions")
-
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 4.dp),
-            shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = Color.White)
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
+            // ---------------------------------------------------------- Permissions
+            SectionLabel("Permissions")
+            ChittiSurfaceCard(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = Space.gutter)
+                    .staggeredEntrance(0),
+                contentPadding = PaddingValues(horizontal = Space.l, vertical = Space.xs)
+            ) {
                 PermissionRow(
-                    name = "Notification Listener",
-                    isGranted = notificationListenerEnabled,
-                    onRequest = {
+                    title = "Notification access",
+                    explanation = "Reads incoming notifications so Chitti can capture events for you",
+                    icon = Icons.Filled.Notifications,
+                    iconTint = Accent,
+                    granted = notificationListenerEnabled,
+                    onGrant = {
                         try {
                             context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
                         } catch (e: android.content.ActivityNotFoundException) {
@@ -158,174 +192,213 @@ fun SettingsScreen(
                         }
                     }
                 )
-                Divider(modifier = Modifier.padding(vertical = 8.dp))
+                HairlineDivider()
                 PermissionRow(
-                    name = "Microphone (Voice)",
-                    isGranted = hasMicrophone,
-                    onRequest = { requestPermission(android.Manifest.permission.RECORD_AUDIO) }
+                    title = "Microphone",
+                    explanation = "Lets you talk to Chitti and dictate notes on device",
+                    icon = Icons.Filled.Mic,
+                    iconTint = Iris,
+                    granted = hasMicrophone,
+                    onGrant = { requestPermission(android.Manifest.permission.RECORD_AUDIO) }
                 )
-                Divider(modifier = Modifier.padding(vertical = 8.dp))
+                HairlineDivider()
                 PermissionRow(
-                    name = "Calendar",
-                    isGranted = hasCalendar,
-                    onRequest = { requestPermission(android.Manifest.permission.WRITE_CALENDAR) }
+                    title = "Calendar",
+                    explanation = "Writes detected events straight into your calendar",
+                    icon = Icons.Filled.DateRange,
+                    iconTint = Amber,
+                    granted = hasCalendar,
+                    onGrant = { requestPermission(android.Manifest.permission.WRITE_CALENDAR) }
                 )
             }
-        }
 
-        Spacer(modifier = Modifier.height(16.dp))
+            // ---------------------------------------------------------- Models
+            SectionLabel("On-device models")
+            ChittiSurfaceCard(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = Space.gutter)
+                    .staggeredEntrance(1),
+                contentPadding = PaddingValues(horizontal = Space.l, vertical = Space.xs)
+            ) {
+                ModelRow(
+                    name = "MediaPipe Gemma",
+                    role = "Language model",
+                    icon = Icons.Filled.Psychology
+                )
+                HairlineDivider()
+                ModelRow(
+                    name = "Android SpeechRecognizer",
+                    role = "Speech to text",
+                    icon = Icons.Filled.RecordVoiceOver
+                )
+                HairlineDivider()
+                ModelRow(
+                    name = "Android TextToSpeech",
+                    role = "Text to speech",
+                    icon = Icons.Filled.VolumeUp
+                )
+            }
 
-        // PRIVACY DASHBOARD
-        SectionHeader("Privacy Dashboard")
-
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 4.dp),
-            shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = Color.White)
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text("Data Stored on Device", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
-                Spacer(modifier = Modifier.height(12.dp))
-
-                DataStatRow("Captured Events", eventCount)
-                DataStatRow("Tasks", taskCount)
-                DataStatRow("Raw Notifications", notificationCount)
-                DataStatRow("Memories", memoryCount)
-                DataStatRow("Chat Messages", chatMessageCount)
-                DataStatRow("Automation Logs", automationHistoryCount)
-
-                Spacer(modifier = Modifier.height(8.dp))
-                Divider()
-                Spacer(modifier = Modifier.height(8.dp))
-
-                val totalItems = eventCount + taskCount + notificationCount + memoryCount + chatMessageCount + automationHistoryCount
+            // ---------------------------------------------------------- Storage
+            SectionLabel("Storage")
+            ChittiSurfaceCard(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = Space.gutter)
+                    .staggeredEntrance(2)
+            ) {
+                StorageRow("Captured events", eventCount)
+                StorageRow("Tasks", taskCount)
+                StorageRow("Notifications", notificationCount)
+                StorageRow("Memories", memoryCount)
+                StorageRow("Chat messages", chatMessageCount)
+                StorageRow("Automation logs", automationHistoryCount)
+                Spacer(Modifier.height(Space.m))
+                HairlineDivider()
+                Spacer(Modifier.height(Space.m))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Total Items", fontWeight = FontWeight.Bold)
-                    Text("$totalItems", fontWeight = FontWeight.Bold, color = Color(0xFF1565C0))
+                    Text(
+                        text = "Total items",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = TextHigh,
+                        modifier = Modifier.weight(1f)
+                    )
+                    CountUpText(
+                        target = totalItems,
+                        style = MaterialTheme.typography.titleSmall,
+                        color = TextHigh
+                    )
                 }
             }
-        }
 
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // SELECTIVE DATA MANAGEMENT
-        SectionHeader("Data Management")
-
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 4.dp),
-            shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = Color.White)
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                DataDeleteRow("Clear Notifications", notificationCount, onClearNotifications)
-                Divider(modifier = Modifier.padding(vertical = 4.dp))
-                DataDeleteRow("Clear Chat History", chatMessageCount, onClearChatHistory)
-                Divider(modifier = Modifier.padding(vertical = 4.dp))
-                DataDeleteRow("Clear Automation Logs", automationHistoryCount, onClearAutomationHistory)
-                Divider(modifier = Modifier.padding(vertical = 4.dp))
-                DataDeleteRow("Clear Memories", memoryCount, onClearMemories)
-            }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // NUCLEAR OPTION
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 4.dp),
-            shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = Color(0xFFFFEBEE))
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Filled.Warning, contentDescription = null, tint = Color.Red)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Wipe All Data", fontWeight = FontWeight.Bold, color = Color.Red)
-                }
+            // ---------------------------------------------------------- Data
+            SectionLabel("Data")
+            ChittiSurfaceCard(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = Space.gutter)
+                    .staggeredEntrance(3)
+            ) {
                 Text(
-                    "This will delete ALL captured events, tasks, memories, notifications, and chat history. This cannot be undone.",
+                    text = "Clear one kind of data at a time, or erase everything Chitti has stored.",
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color.Gray,
-                    modifier = Modifier.padding(vertical = 8.dp)
+                    color = TextMid
                 )
-                Button(
-                    onClick = { showWipeConfirmation = true },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color.Red),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("Clear Everything")
+                Spacer(Modifier.height(Space.m))
+                Column(verticalArrangement = Arrangement.spacedBy(Space.s)) {
+                    SecondaryButton(
+                        text = "Clear notifications ($notificationCount)",
+                        onClick = onClearNotifications,
+                        enabled = notificationCount > 0,
+                        fill = true
+                    )
+                    SecondaryButton(
+                        text = "Clear chat history ($chatMessageCount)",
+                        onClick = onClearChatHistory,
+                        enabled = chatMessageCount > 0,
+                        fill = true
+                    )
+                    SecondaryButton(
+                        text = "Clear automation logs ($automationHistoryCount)",
+                        onClick = onClearAutomationHistory,
+                        enabled = automationHistoryCount > 0,
+                        fill = true
+                    )
+                    SecondaryButton(
+                        text = "Clear memories ($memoryCount)",
+                        onClick = onClearMemories,
+                        enabled = memoryCount > 0,
+                        fill = true
+                    )
                 }
+                Spacer(Modifier.height(Space.l))
+                HairlineDivider()
+                Spacer(Modifier.height(Space.l))
+                DangerButton(
+                    text = "Erase all data",
+                    onClick = { showWipeConfirmation = true },
+                    icon = Icons.Filled.DeleteForever,
+                    fill = true
+                )
+                Spacer(Modifier.height(Space.s))
+                Text(
+                    text = "Deletes every event, task, memory, notification and message. This cannot be undone.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextLow
+                )
+            }
+
+            // ---------------------------------------------------------- About
+            SectionLabel("About")
+            ChittiSurfaceCard(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = Space.gutter)
+                    .staggeredEntrance(4)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Chitti",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = TextHigh,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        text = "v1.0",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = TextLow
+                    )
+                }
+                Spacer(Modifier.height(Space.xs))
+                Text(
+                    text = "Every model runs on this device. Nothing you capture, say or store leaves it.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextMid
+                )
             }
         }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // MODEL INFO
-        SectionHeader("AI Models")
-
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 4.dp),
-            shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = Color.White)
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                ModelRow("LLM", "MediaPipe Gemma", "On-device")
-                Divider(modifier = Modifier.padding(vertical = 4.dp))
-                ModelRow("STT", "Android SpeechRecognizer", "On-device")
-                Divider(modifier = Modifier.padding(vertical = 4.dp))
-                ModelRow("TTS", "Android TextToSpeech", "On-device")
-            }
-        }
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        // Version
-        Text(
-            "Chitti v1.0 · Offline AI Assistant",
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            style = MaterialTheme.typography.bodySmall,
-            color = Color.Gray,
-            textAlign = androidx.compose.ui.text.style.TextAlign.Center
-        )
-
-        Spacer(modifier = Modifier.height(16.dp))
-    }
     }
 
     // Wipe confirmation dialog
     if (showWipeConfirmation) {
         AlertDialog(
             onDismissRequest = { showWipeConfirmation = false },
-            icon = { Icon(Icons.Filled.Warning, contentDescription = null, tint = Color.Red) },
-            title = { Text("Are you sure?") },
-            text = { Text("This will permanently delete all data from Chitti. This action cannot be undone.") },
+            modifier = Modifier.border(1.dp, Hairline, RoundedCornerShape(20.dp)),
+            shape = RoundedCornerShape(20.dp),
+            containerColor = Surface1,
+            iconContentColor = Rose,
+            titleContentColor = TextHigh,
+            textContentColor = TextMid,
+            icon = { Icon(Icons.Filled.Warning, contentDescription = null, tint = Rose) },
+            title = { Text("Erase all data?", style = MaterialTheme.typography.titleLarge, color = TextHigh) },
+            text = {
+                Text(
+                    text = "This permanently deletes everything Chitti has stored on this device. It cannot be undone.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = TextMid
+                )
+            },
             confirmButton = {
-                Button(
+                DangerButton(
+                    text = "Erase everything",
                     onClick = {
                         onWipeData()
                         showWipeConfirmation = false
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
-                ) {
-                    Text("Delete Everything")
-                }
+                    }
+                )
             },
             dismissButton = {
-                TextButton(onClick = { showWipeConfirmation = false }) {
-                    Text("Cancel")
-                }
+                SecondaryButton(
+                    text = "Cancel",
+                    onClick = { showWipeConfirmation = false }
+                )
             }
         )
     }
@@ -341,97 +414,68 @@ private fun Context.findActivity(): Activity? {
     return null
 }
 
+/** One permission: what it is, why Chitti wants it, and its current state. */
 @Composable
-fun SectionHeader(title: String) {
-    Text(
-        text = title,
-        style = MaterialTheme.typography.titleSmall,
-        color = Color.Gray,
-        fontWeight = FontWeight.Bold,
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-    )
-}
-
-@Composable
-fun PermissionRow(name: String, isGranted: Boolean, onRequest: () -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically
+private fun PermissionRow(
+    title: String,
+    explanation: String,
+    icon: ImageVector,
+    iconTint: Color,
+    granted: Boolean,
+    onGrant: () -> Unit
+) {
+    ListRow(
+        title = title,
+        subtitle = explanation,
+        icon = icon,
+        iconTint = if (granted) iconTint else TextLow
     ) {
-        Icon(
-            imageVector = if (isGranted) Icons.Filled.CheckCircle else Icons.Filled.Warning,
-            contentDescription = null,
-            tint = if (isGranted) Color(0xFF4CAF50) else Color(0xFFFFA000),
-            modifier = Modifier.size(20.dp)
-        )
-        Spacer(modifier = Modifier.width(12.dp))
-        Text(name, modifier = Modifier.weight(1f), fontWeight = FontWeight.Medium)
-        if (!isGranted) {
-            TextButton(onClick = onRequest) {
-                Text("Grant", color = Color(0xFF1565C0))
-            }
+        Spacer(Modifier.width(Space.m))
+        if (granted) {
+            StatusPill(text = "Granted", tint = Mint, icon = Icons.Filled.Check)
         } else {
-            Text("Granted", style = MaterialTheme.typography.bodySmall, color = Color(0xFF4CAF50))
+            SecondaryButton(text = "Grant", onClick = onGrant)
         }
     }
 }
 
+/** One on-device model: friendly name, what it does, and where it runs. */
 @Composable
-fun DataStatRow(label: String, count: Int) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp),
-        horizontalArrangement = Arrangement.SpaceBetween
+private fun ModelRow(
+    name: String,
+    role: String,
+    icon: ImageVector
+) {
+    ListRow(
+        title = name,
+        subtitle = role,
+        icon = icon,
+        iconTint = Sky
     ) {
-        Text(label, style = MaterialTheme.typography.bodyMedium)
-        Text("$count", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, color = Color(0xFF424242))
+        Spacer(Modifier.width(Space.m))
+        StatusPill(text = "On-device", tint = Sky)
     }
 }
 
+/** A stored data type and how many rows of it exist. */
 @Composable
-fun DataDeleteRow(label: String, count: Int, onDelete: () -> Unit) {
+private fun StorageRow(label: String, count: Int) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp),
+            .padding(vertical = Space.s),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(label, fontWeight = FontWeight.Medium)
-            Text("$count items", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-        }
-        TextButton(
-            onClick = onDelete,
-            enabled = count > 0
-        ) {
-            Text("Clear", color = if (count > 0) Color.Red else Color.Gray)
-        }
-    }
-}
-
-@Composable
-fun ModelRow(type: String, name: String, location: String) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(type, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
-            Text(name, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-        }
-        Surface(
-            shape = RoundedCornerShape(4.dp),
-            color = Color(0xFF4CAF50).copy(alpha = 0.1f)
-        ) {
-            Text(
-                location,
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                style = MaterialTheme.typography.labelSmall,
-                color = Color(0xFF4CAF50)
-            )
-        }
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = TextMid,
+            modifier = Modifier.weight(1f)
+        )
+        CountUpText(
+            target = count,
+            style = MaterialTheme.typography.labelLarge,
+            color = TextHigh
+        )
     }
 }

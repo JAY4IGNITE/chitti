@@ -1,29 +1,71 @@
 package com.owlcoders.chitti.ui.screens
 
-import androidx.compose.animation.animateColorAsState
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Done
+import androidx.compose.material.icons.filled.Inbox
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.owlcoders.chitti.db.entities.NotificationEntity
-import com.owlcoders.chitti.ui.theme.LightScreenBg
-import com.owlcoders.chitti.ui.theme.LightScreenInk
+import com.owlcoders.chitti.ui.components.ChittiMotion
+import com.owlcoders.chitti.ui.components.ChittiSurfaceCard
+import com.owlcoders.chitti.ui.components.EmptyState
+import com.owlcoders.chitti.ui.components.ScreenHeader
+import com.owlcoders.chitti.ui.components.ScreenScaffold
+import com.owlcoders.chitti.ui.components.SecondaryButton
+import com.owlcoders.chitti.ui.components.SegmentedTabs
+import com.owlcoders.chitti.ui.components.Space
+import com.owlcoders.chitti.ui.components.StatusPill
+import com.owlcoders.chitti.ui.components.pressScale
+import com.owlcoders.chitti.ui.components.staggeredEntrance
+import com.owlcoders.chitti.ui.theme.Mint
+import com.owlcoders.chitti.ui.theme.Rose
+import com.owlcoders.chitti.ui.theme.Sky
+import com.owlcoders.chitti.ui.theme.TextHigh
+import com.owlcoders.chitti.ui.theme.TextLow
+import com.owlcoders.chitti.ui.theme.TextMid
 import java.text.SimpleDateFormat
-import java.util.*
+import java.util.Date
+import java.util.Locale
 
-@OptIn(ExperimentalMaterial3Api::class)
+/** Bottom inset so the floating bottom bar never covers the last card. */
+private val BottomBarInset = 24.dp
+
+private val InboxTabs = listOf("All", "Unprocessed", "Processed")
+
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun InboxScreen(
     notifications: List<NotificationEntity>,
@@ -31,111 +73,70 @@ fun InboxScreen(
     onDelete: (NotificationEntity) -> Unit = {}
 ) {
     val dateFormat = remember { SimpleDateFormat("MMM dd, HH:mm", Locale.getDefault()) }
-    var selectedFilter by remember { mutableStateOf("all") } // all, unprocessed, processed
+    var selectedTab by remember { mutableIntStateOf(0) }
 
-    val filteredNotifications = when (selectedFilter) {
-        "unprocessed" -> notifications.filter { !it.processed }
-        "processed" -> notifications.filter { it.processed }
+    val filteredNotifications = when (selectedTab) {
+        1 -> notifications.filter { !it.processed }
+        2 -> notifications.filter { it.processed }
         else -> notifications
     }
+    val unprocessed = notifications.count { !it.processed }
 
-    // Light screen: provide a dark content colour so Text/Icon without an explicit
-    // colour are readable on the white cards (the theme's onSurface is near-white).
-    CompositionLocalProvider(LocalContentColor provides LightScreenInk) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(LightScreenBg)
-    ) {
-        // Header
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(Color(0xFF1565C0))
-                .padding(16.dp)
-        ) {
-            Column {
-                Text(
-                    text = "📥 Notification Inbox",
-                    color = Color.White,
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(top = 16.dp)
-                )
-                Text(
-                    text = "${notifications.size} captured · ${notifications.count { !it.processed }} unprocessed",
-                    color = Color.White.copy(alpha = 0.8f),
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(top = 4.dp)
-                )
+    ScreenScaffold {
+        ScreenHeader(
+            title = "Inbox",
+            subtitle = when {
+                notifications.isEmpty() -> "Nothing captured yet"
+                unprocessed == 0 -> "${notifications.size} captured, all processed"
+                else -> "${notifications.size} captured, $unprocessed unprocessed"
             }
-        }
+        )
 
-        // Filter chips
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            // Unselected chip labels default to onSurfaceVariant (light grey) which is
-            // faint on the light background; use the light-screen ink instead.
-            val chipColors = FilterChipDefaults.filterChipColors(labelColor = LightScreenInk)
-            FilterChip(
-                selected = selectedFilter == "all",
-                onClick = { selectedFilter = "all" },
-                colors = chipColors,
-                label = { Text("All") }
-            )
-            FilterChip(
-                selected = selectedFilter == "unprocessed",
-                onClick = { selectedFilter = "unprocessed" },
-                colors = chipColors,
-                label = { Text("Unprocessed") }
-            )
-            FilterChip(
-                selected = selectedFilter == "processed",
-                onClick = { selectedFilter = "processed" },
-                colors = chipColors,
-                label = { Text("Processed") }
-            )
-        }
+        SegmentedTabs(
+            options = InboxTabs,
+            selectedIndex = selectedTab,
+            onSelect = { selectedTab = it },
+            modifier = Modifier.padding(horizontal = Space.gutter)
+        )
+
+        Spacer(Modifier.height(Space.l))
 
         if (filteredNotifications.isEmpty()) {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(
-                        Icons.Filled.Inbox,
-                        contentDescription = null,
-                        modifier = Modifier.size(64.dp),
-                        tint = Color.Gray
-                    )
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text("No notifications yet", color = Color.Gray, style = MaterialTheme.typography.bodyLarge)
+            EmptyState(
+                icon = Icons.Filled.Inbox,
+                title = if (notifications.isEmpty()) "No notifications yet" else "Nothing here",
+                message = when (selectedTab) {
+                    1 -> "Every captured notification has been processed."
+                    2 -> "Notifications you process will collect here."
+                    else -> "Chitti collects notifications from your apps once access is granted."
                 }
-            }
+            )
         } else {
             LazyColumn(
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                contentPadding = PaddingValues(
+                    start = Space.gutter,
+                    end = Space.gutter,
+                    top = Space.xs,
+                    bottom = BottomBarInset
+                ),
+                verticalArrangement = Arrangement.spacedBy(Space.m)
             ) {
-                // Stable keys: NotificationCard keeps local `expanded` state, so
-                // without keys that state would jump to whichever item slides into
-                // the same position after a delete / filter change.
-                items(filteredNotifications, key = { it.id }) { notification ->
+                // Stable keys: the card keeps local `expanded` state, so without keys that
+                // state would jump to whichever item slides into the same position after a
+                // delete or a filter change.
+                itemsIndexed(filteredNotifications, key = { _, n -> n.id }) { index, notification ->
                     NotificationCard(
                         notification = notification,
                         dateFormat = dateFormat,
                         onMarkProcessed = { onMarkProcessed(notification) },
-                        onDelete = { onDelete(notification) }
+                        onDelete = { onDelete(notification) },
+                        modifier = Modifier
+                            .animateItemPlacement(ChittiMotion.settle())
+                            .staggeredEntrance(index)
                     )
                 }
             }
         }
-    }
     }
 }
 
@@ -144,91 +145,113 @@ fun NotificationCard(
     notification: NotificationEntity,
     dateFormat: SimpleDateFormat,
     onMarkProcessed: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     var expanded by remember { mutableStateOf(false) }
-    val bgColor by animateColorAsState(
-        if (notification.processed) Color(0xFFE8F5E9) else Color.White,
-        label = "cardBg"
-    )
 
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { expanded = !expanded },
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = bgColor),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ChittiSurfaceCard(
+        modifier = modifier.fillMaxWidth(),
+        onClick = { expanded = !expanded },
+        accent = if (notification.processed) Mint else Sky
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                // App icon placeholder
-                Surface(
-                    modifier = Modifier.size(40.dp),
-                    shape = RoundedCornerShape(8.dp),
-                    color = Color(0xFF1565C0).copy(alpha = 0.1f)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            Icons.Filled.Notifications,
-                            contentDescription = null,
-                            tint = Color(0xFF1565C0),
-                            modifier = Modifier.size(24.dp)
-                        )
-                    }
-                }
-                Spacer(modifier = Modifier.width(12.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = notification.rawTitle.ifEmpty { notification.packageName },
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = dateFormat.format(Date(notification.postTime)),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color.Gray
-                    )
-                }
-                if (notification.processed) {
-                    Icon(
-                        Icons.Filled.CheckCircle,
-                        contentDescription = "Processed",
-                        tint = Color(0xFF4CAF50),
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-            }
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            StatusPill(text = sourceLabel(notification.packageName), tint = Sky)
+            Spacer(Modifier.width(Space.s))
+            Spacer(Modifier.weight(1f))
+            Text(
+                text = relativeTime(notification.postTime, dateFormat),
+                style = MaterialTheme.typography.labelSmall,
+                color = TextLow,
+                maxLines = 1
+            )
+        }
 
-            Spacer(modifier = Modifier.height(8.dp))
+        Spacer(Modifier.height(Space.m))
+
+        Text(
+            text = notification.rawTitle.ifBlank { "Untitled notification" },
+            style = MaterialTheme.typography.titleMedium,
+            color = TextHigh,
+            maxLines = if (expanded) Int.MAX_VALUE else 2,
+            overflow = TextOverflow.Ellipsis
+        )
+
+        if (notification.rawText.isNotBlank()) {
+            Spacer(Modifier.height(Space.xs))
             Text(
                 text = notification.rawText,
+                style = MaterialTheme.typography.bodySmall,
+                color = TextMid,
                 maxLines = if (expanded) Int.MAX_VALUE else 2,
-                overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.bodyMedium
+                overflow = TextOverflow.Ellipsis
             )
-
-            if (expanded) {
-                Spacer(modifier = Modifier.height(12.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
-                ) {
-                    if (!notification.processed) {
-                        TextButton(onClick = onMarkProcessed) {
-                            Icon(Icons.Filled.Done, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Process")
-                        }
-                    }
-                    TextButton(onClick = onDelete) {
-                        Icon(Icons.Filled.Delete, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color.Red)
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Delete", color = Color.Red)
-                    }
-                }
-            }
         }
+
+        Spacer(Modifier.height(Space.l))
+
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            if (notification.processed) {
+                StatusPill(text = "Processed", tint = Mint, icon = Icons.Filled.Check)
+            } else {
+                SecondaryButton(
+                    text = "Mark processed",
+                    onClick = onMarkProcessed,
+                    icon = Icons.Filled.Done
+                )
+            }
+            Spacer(Modifier.weight(1f))
+            IconAction(
+                icon = Icons.Filled.Delete,
+                tint = Rose,
+                contentDescription = "Delete notification",
+                onClick = onDelete
+            )
+        }
+    }
+}
+
+/** Quiet square icon affordance: tinted wash, tinted glyph, press feedback. */
+@Composable
+private fun IconAction(
+    icon: ImageVector,
+    tint: Color,
+    contentDescription: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val interaction = remember { MutableInteractionSource() }
+    Box(
+        modifier = modifier
+            .size(36.dp)
+            .pressScale(interaction, pressed = 0.94f)
+            .clip(RoundedCornerShape(11.dp))
+            .background(tint.copy(alpha = 0.12f))
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(icon, contentDescription = contentDescription, tint = tint, modifier = Modifier.size(17.dp))
+    }
+}
+
+/** "com.whatsapp" reads best as "Whatsapp": the package name is all a notification carries. */
+private fun sourceLabel(packageName: String): String {
+    val segment = packageName.substringAfterLast('.').ifBlank { packageName }
+    return segment.replaceFirstChar { it.uppercase() }
+}
+
+/** Relative time for anything within the last week, an absolute stamp beyond it. */
+private fun relativeTime(postTime: Long, dateFormat: SimpleDateFormat): String {
+    val delta = System.currentTimeMillis() - postTime
+    val minutes = delta / 60_000L
+    val hours = delta / 3_600_000L
+    val days = delta / 86_400_000L
+    return when {
+        delta < 0L -> dateFormat.format(Date(postTime))
+        minutes < 1L -> "just now"
+        minutes < 60L -> "${minutes}m ago"
+        hours < 24L -> "${hours}h ago"
+        days < 7L -> "${days}d ago"
+        else -> dateFormat.format(Date(postTime))
     }
 }

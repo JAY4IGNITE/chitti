@@ -10,24 +10,42 @@ import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.filled.Accessibility
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.NotificationsActive
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.app.NotificationManagerCompat
@@ -35,7 +53,23 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.owlcoders.chitti.services.ChittiAccessibilityService
-import com.owlcoders.chitti.ui.theme.*
+import com.owlcoders.chitti.ui.components.ChittiSurfaceCard
+import com.owlcoders.chitti.ui.components.HairlineDivider
+import com.owlcoders.chitti.ui.components.ListRow
+import com.owlcoders.chitti.ui.components.PrimaryButton
+import com.owlcoders.chitti.ui.components.ScreenScaffold
+import com.owlcoders.chitti.ui.components.SecondaryButton
+import com.owlcoders.chitti.ui.components.Space
+import com.owlcoders.chitti.ui.components.StatusPill
+import com.owlcoders.chitti.ui.components.pressScale
+import com.owlcoders.chitti.ui.components.staggeredEntrance
+import com.owlcoders.chitti.ui.theme.Accent
+import com.owlcoders.chitti.ui.theme.Hairline
+import com.owlcoders.chitti.ui.theme.Mint
+import com.owlcoders.chitti.ui.theme.Surface2
+import com.owlcoders.chitti.ui.theme.TextHigh
+import com.owlcoders.chitti.ui.theme.TextLow
+import com.owlcoders.chitti.ui.theme.TextMid
 
 @Composable
 fun PermissionsOnboardingScreen(
@@ -87,94 +121,134 @@ fun PermissionsOnboardingScreen(
         }
     }
 
-    Surface(modifier = Modifier.fillMaxSize(), color = GeminiDarkBg) {
+    val skipInteraction = remember { MutableInteractionSource() }
+
+    ScreenScaffold {
         Column(
             modifier = Modifier
-                .fillMaxSize()
+                .fillMaxWidth()
+                .weight(1f)
                 .verticalScroll(rememberScrollState())
-                .padding(24.dp),
+                .padding(horizontal = Space.gutter)
+                .padding(bottom = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(Modifier.height(Space.xxxl))
 
+            // Hero: app mark, wordmark, one line of copy.
             Box(
                 modifier = Modifier
-                    .size(80.dp)
-                    .clip(CircleShape)
-                    .background(Brush.radialGradient(listOf(GeminiCyan, GeminiBlue))),
+                    .staggeredEntrance(0)
+                    .size(64.dp)
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(Surface2)
+                    .border(1.dp, Hairline, RoundedCornerShape(20.dp)),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(Icons.Filled.AutoAwesome, contentDescription = null, tint = Color.White, modifier = Modifier.size(40.dp))
-            }
-
-            Spacer(modifier = Modifier.height(24.dp))
-            Text("Welcome to Chitti", style = MaterialTheme.typography.headlineMedium, color = TextPrimary, fontWeight = FontWeight.Bold)
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                "To act as your powerful AI assistant, Chitti needs the following permissions.",
-                style = MaterialTheme.typography.bodyMedium, color = TextSecondary, textAlign = TextAlign.Center
-            )
-
-            Spacer(modifier = Modifier.height(32.dp))
-
-            PermissionItem(
-                title = "Microphone",
-                description = "To hear your voice commands.",
-                icon = Icons.Filled.Mic,
-                isGranted = hasMic,
-                onClick = { micLauncher.launch(Manifest.permission.RECORD_AUDIO) }
-            )
-
-            PermissionItem(
-                title = "Notification Access",
-                description = "To organize your tasks from incoming messages.",
-                icon = Icons.Filled.Notifications,
-                isGranted = hasNotification,
-                onClick = { openSettingsSafely(context, Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS) }
-            )
-
-            PermissionItem(
-                title = "Accessibility Service",
-                description = "To perform typing and clicks on your behalf.",
-                icon = Icons.Filled.Accessibility,
-                isGranted = hasAccessibility,
-                onClick = { openSettingsSafely(context, Settings.ACTION_ACCESSIBILITY_SETTINGS) }
-            )
-
-            if (Build.VERSION.SDK_INT >= 33) {
-                PermissionItem(
-                    title = "Show Notifications",
-                    description = "For reminders and suspicious-link alerts (optional).",
-                    icon = Icons.Filled.NotificationsActive,
-                    isGranted = hasPostNotifications,
-                    onClick = { postNotificationsLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) }
+                Icon(
+                    Icons.Filled.AutoAwesome,
+                    contentDescription = null,
+                    tint = Accent,
+                    modifier = Modifier.size(28.dp)
                 )
             }
 
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(Modifier.height(Space.xl))
 
-            Button(
+            Text(
+                text = "Chitti",
+                style = MaterialTheme.typography.headlineLarge,
+                color = TextHigh,
+                modifier = Modifier.staggeredEntrance(1)
+            )
+
+            Spacer(Modifier.height(Space.s))
+
+            Text(
+                text = "An assistant that runs on your phone. Grant these so it can listen, read what arrives and act for you.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = TextMid,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.staggeredEntrance(2)
+            )
+
+            Spacer(Modifier.height(Space.xxxl))
+
+            ChittiSurfaceCard(
+                modifier = Modifier.staggeredEntrance(3),
+                contentPadding = PaddingValues(horizontal = Space.l, vertical = Space.xs)
+            ) {
+                PermissionItem(
+                    title = "Microphone",
+                    description = "Hear your voice commands.",
+                    icon = Icons.Filled.Mic,
+                    isGranted = hasMic,
+                    onClick = { micLauncher.launch(Manifest.permission.RECORD_AUDIO) }
+                )
+
+                HairlineDivider(inset = 44.dp)
+
+                PermissionItem(
+                    title = "Notification access",
+                    description = "Turn incoming messages into tasks.",
+                    icon = Icons.Filled.Notifications,
+                    isGranted = hasNotification,
+                    onClick = { openSettingsSafely(context, Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS) }
+                )
+
+                HairlineDivider(inset = 44.dp)
+
+                PermissionItem(
+                    title = "Accessibility service",
+                    description = "Tap and type on your behalf.",
+                    icon = Icons.Filled.Accessibility,
+                    isGranted = hasAccessibility,
+                    onClick = { openSettingsSafely(context, Settings.ACTION_ACCESSIBILITY_SETTINGS) }
+                )
+
+                if (Build.VERSION.SDK_INT >= 33) {
+                    HairlineDivider(inset = 44.dp)
+
+                    PermissionItem(
+                        title = "Show notifications",
+                        description = "Reminders and suspicious-link alerts. Optional.",
+                        icon = Icons.Filled.NotificationsActive,
+                        isGranted = hasPostNotifications,
+                        onClick = { postNotificationsLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) }
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(Space.xxl))
+
+            PrimaryButton(
+                text = "Continue",
+                modifier = Modifier.staggeredEntrance(4),
                 onClick = {
                     refresh()
                     if (hasMic && hasNotification && hasAccessibility) {
                         onAllPermissionsGranted()
                     }
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = GeminiBlue),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Text("Refresh & Continue", fontSize = MaterialTheme.typography.titleMedium.fontSize)
-            }
-            Spacer(modifier = Modifier.height(16.dp))
+                }
+            )
 
-            // Allow bypassing for testing purposes
-            TextButton(onClick = onAllPermissionsGranted) {
-                Text("Skip (Not Recommended)", color = TextMuted)
-            }
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(Modifier.height(Space.m))
+
+            // Bypass, kept for testing and for users who want to look around first.
+            Text(
+                text = "Skip for now",
+                style = MaterialTheme.typography.labelLarge,
+                color = TextLow,
+                modifier = Modifier
+                    .pressScale(skipInteraction, pressed = 0.97f)
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable(
+                        interactionSource = skipInteraction,
+                        indication = null,
+                        onClick = onAllPermissionsGranted
+                    )
+                    .padding(horizontal = Space.l, vertical = Space.m)
+            )
         }
     }
 }
@@ -190,6 +264,7 @@ private fun openSettingsSafely(context: Context, action: String) {
     }
 }
 
+/** One permission: icon well, name, one-line reason, and either a Granted pill or a Grant button. */
 @Composable
 fun PermissionItem(
     title: String,
@@ -198,48 +273,19 @@ fun PermissionItem(
     isGranted: Boolean,
     onClick: () -> Unit
 ) {
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp),
-        shape = RoundedCornerShape(16.dp),
-        color = GeminiSurfaceElevated,
-        border = androidx.compose.foundation.BorderStroke(1.dp, if (isGranted) GeminiGreen.copy(alpha = 0.5f) else GeminiBorder)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(CircleShape)
-                    .background(if (isGranted) GeminiGreen.copy(alpha = 0.2f) else GeminiCyan.copy(alpha = 0.2f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(icon, contentDescription = null, tint = if (isGranted) GeminiGreen else GeminiCyan)
-            }
-            Spacer(modifier = Modifier.width(16.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.titleMedium, color = TextPrimary)
-                Text(description, style = MaterialTheme.typography.bodySmall, color = TextSecondary)
-            }
+    ListRow(
+        title = title,
+        subtitle = description,
+        icon = icon,
+        iconTint = Accent,
+        trailing = {
             if (isGranted) {
-                Icon(Icons.Filled.CheckCircle, contentDescription = "Granted", tint = GeminiGreen, modifier = Modifier.size(28.dp))
+                StatusPill(text = "Granted", tint = Mint)
             } else {
-                Button(
-                    onClick = onClick,
-                    colors = ButtonDefaults.buttonColors(containerColor = GeminiCyan),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
-                    modifier = Modifier.height(32.dp)
-                ) {
-                    Text("Grant", fontSize = MaterialTheme.typography.labelSmall.fontSize)
-                }
+                SecondaryButton(text = "Grant", onClick = onClick)
             }
         }
-    }
+    )
 }
 
 fun checkMicPermission(context: Context): Boolean {

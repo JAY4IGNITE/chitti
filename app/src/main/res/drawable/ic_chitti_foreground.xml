@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Adaptive-icon foreground. 108x108 viewport with the glyph kept inside the 72x72 safe zone so no
+  launcher mask can clip it. The four-point spark is the same mark the app uses in-product.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Primary spark -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,28 C56.2,45.4 62.6,51.8 80,54 C62.6,56.2 56.2,62.6 54,80 C51.8,62.6 45.4,56.2 28,54 C45.4,51.8 51.8,45.4 54,28 Z" />
+
+    <!-- Secondary spark, offset, reads as "listening" rather than pure decoration -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.62"
+        android:pathData="M76,68 C76.9,74.1 79.9,77.1 86,78 C79.9,78.9 76.9,81.9 76,88 C75.1,81.9 72.1,78.9 66,78 C72.1,77.1 75.1,74.1 76,68 Z" />
+</vector>

@@ -138,8 +138,7 @@ fun ChatBotScreen(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(GeminiSurface)
-                .border(width = 0.5.dp, color = GeminiBorder, shape = RoundedCornerShape(bottomStart = 16.dp, bottomEnd = 16.dp))
+                .background(Ink)
                 .padding(horizontal = 20.dp, vertical = 14.dp)
         ) {
             Row(
@@ -150,27 +149,29 @@ fun ChatBotScreen(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(
                         modifier = Modifier
-                            .size(36.dp)
-                            .clip(CircleShape)
-                            .background(Brush.radialGradient(listOf(GeminiCyan, GeminiBlue))),
+                            .size(34.dp)
+                            .clip(RoundedCornerShape(11.dp))
+                            .background(Accent.copy(alpha = 0.14f)),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(Icons.Filled.SmartToy, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp))
+                        Icon(Icons.Filled.SmartToy, contentDescription = null, tint = Accent, modifier = Modifier.size(18.dp))
                     }
                     Spacer(modifier = Modifier.width(12.dp))
                     Column {
-                        Text("Chitti Assistant", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = TextPrimary)
-                        Text("On-device AI · Voice Enabled", style = MaterialTheme.typography.labelSmall, color = GeminiCyan)
+                        Text("Chitti", style = MaterialTheme.typography.titleLarge, color = TextHigh)
+                        Text("On-device assistant", style = MaterialTheme.typography.labelSmall, color = TextMid)
                     }
                 }
 
                 if (ttsEngine?.isSpeaking == true) {
                     IconButton(onClick = { ttsEngine.stop() }) {
-                        Icon(Icons.Filled.VolumeMute, contentDescription = "Mute TTS", tint = GeminiPink)
+                        Icon(Icons.Filled.VolumeMute, contentDescription = "Stop speaking", tint = Rose, modifier = Modifier.size(20.dp))
                     }
                 }
             }
         }
+
+        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Hairline))
 
         // Chat Message History
         LazyColumn(
@@ -201,8 +202,8 @@ fun ChatBotScreen(
                         status = LatticeStatus.WORKING,
                         label = "Thinking",
                         pattern = LatticePatterns.Orbit,
-                        color = GeminiCyan,
-                        glow = true,
+                        color = Accent,
+                        glow = false,
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
                     )
                 }
@@ -210,16 +211,10 @@ fun ChatBotScreen(
         }
 
         // Input Bar Area: a floating material with a light-catching top edge instead of a hard divider
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(1.dp)
-                .background(Brush.horizontalGradient(listOf(Color.Transparent, GeminiCyan.copy(alpha = 0.35f), Color.Transparent)))
-        )
+        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Hairline))
         Surface(
             modifier = Modifier.fillMaxWidth(),
-            color = GeminiSurface.copy(alpha = 0.96f),
-            tonalElevation = 8.dp
+            color = Surface1
         ) {
             Row(
                 modifier = Modifier
@@ -236,10 +231,10 @@ fun ChatBotScreen(
                         .size(42.dp)
                         .pressScale(micInteraction, pressed = 0.9f)
                         .clip(CircleShape)
-                        .background(GeminiSurfaceElevated)
-                        .border(1.dp, GeminiBorder, CircleShape)
+                        .background(Surface2)
+                        .border(1.dp, Hairline, CircleShape)
                 ) {
-                    Icon(Icons.Filled.Mic, contentDescription = "Voice Input", tint = GeminiCyan, modifier = Modifier.size(22.dp))
+                    Icon(Icons.Filled.Mic, contentDescription = "Voice input", tint = TextHigh, modifier = Modifier.size(20.dp))
                 }
 
                 Spacer(modifier = Modifier.width(8.dp))
@@ -249,16 +244,18 @@ fun ChatBotScreen(
                     value = inputText,
                     onValueChange = { inputText = it },
                     modifier = Modifier.weight(1f),
-                    placeholder = { Text("Ask anything or say \"Open WhatsApp\"...", color = TextMuted, fontSize = 14.sp) },
+                    placeholder = { Text("Message Chitti", style = MaterialTheme.typography.bodyMedium, color = TextLow) },
+                    textStyle = MaterialTheme.typography.bodyMedium,
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = GeminiCyan,
-                        unfocusedBorderColor = GeminiBorder,
-                        focusedContainerColor = GeminiDarkBg,
-                        unfocusedContainerColor = GeminiDarkBg,
-                        focusedTextColor = TextPrimary,
-                        unfocusedTextColor = TextPrimary
+                        focusedBorderColor = Accent,
+                        unfocusedBorderColor = Hairline,
+                        focusedContainerColor = Surface2,
+                        unfocusedContainerColor = Surface2,
+                        focusedTextColor = TextHigh,
+                        unfocusedTextColor = TextHigh,
+                        cursorColor = Accent
                     ),
-                    shape = RoundedCornerShape(24.dp),
+                    shape = RoundedCornerShape(12.dp),
                     singleLine = true
                 )
 
@@ -272,7 +269,7 @@ fun ChatBotScreen(
                     modifier = Modifier
                         .size(42.dp)
                         .pressScale(sendInteraction, pressed = 0.9f),
-                    colors = IconButtonDefaults.filledIconButtonColors(containerColor = GeminiBlue),
+                    colors = IconButtonDefaults.filledIconButtonColors(containerColor = Accent, disabledContainerColor = Surface2),
                     enabled = inputText.isNotBlank() && !isThinking
                 ) {
                     Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send", tint = Color.White, modifier = Modifier.size(18.dp))
@@ -288,8 +285,8 @@ fun GeminiChatBubble(
     onSpeak: () -> Unit = {}
 ) {
     val alignment = if (msg.isUser) Alignment.CenterEnd else Alignment.CenterStart
-    val bgColor = if (msg.isUser) GeminiBlue else GeminiSurfaceElevated
-    val textColor = TextPrimary
+    val bgColor = if (msg.isUser) Accent else Surface2
+    val textColor = if (msg.isUser) Color.White else TextHigh
 
     // Materialise from where it belongs: a short rise + fade + scale on a settle spring.
     val reduceMotion = rememberReducedMotion()
@@ -307,13 +304,13 @@ fun GeminiChatBubble(
         ) {
         Surface(
             shape = RoundedCornerShape(
-                topStart = 18.dp,
-                topEnd = 18.dp,
-                bottomStart = if (msg.isUser) 18.dp else 4.dp,
-                bottomEnd = if (msg.isUser) 4.dp else 18.dp
+                topStart = 16.dp,
+                topEnd = 16.dp,
+                bottomStart = if (msg.isUser) 16.dp else 5.dp,
+                bottomEnd = if (msg.isUser) 5.dp else 16.dp
             ),
             color = bgColor,
-            border = if (!msg.isUser) androidx.compose.foundation.BorderStroke(1.dp, GeminiBorder) else null,
+            border = if (!msg.isUser) androidx.compose.foundation.BorderStroke(1.dp, Hairline) else null,
             modifier = Modifier.widthIn(max = 310.dp)
         ) {
             Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
@@ -322,9 +319,9 @@ fun GeminiChatBubble(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.padding(bottom = 6.dp)
                     ) {
-                        Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = GeminiGreen, modifier = Modifier.size(14.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(msg.actionLabel, style = MaterialTheme.typography.labelSmall, color = GeminiCyan, fontWeight = FontWeight.Bold)
+                        Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = Mint, modifier = Modifier.size(12.dp))
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text(msg.actionLabel, style = MaterialTheme.typography.labelSmall, color = Mint, fontWeight = FontWeight.SemiBold)
                     }
                 }
 
@@ -342,7 +339,7 @@ fun GeminiChatBubble(
                         horizontalArrangement = Arrangement.End
                     ) {
                         IconButton(onClick = onSpeak, modifier = Modifier.size(24.dp)) {
-                            Icon(Icons.Filled.PlayArrow, contentDescription = "Read aloud", tint = TextSecondary, modifier = Modifier.size(16.dp))
+                            Icon(Icons.Filled.PlayArrow, contentDescription = "Read aloud", tint = TextLow, modifier = Modifier.size(15.dp))
                         }
                     }
                 }

@@ -62,10 +62,11 @@
     <application
         android:name=".ChittiApp"
         android:allowBackup="false"
-        android:icon="@android:drawable/ic_dialog_email"
+        android:icon="@mipmap/ic_launcher"
         android:label="Chitti"
-        android:roundIcon="@android:drawable/ic_dialog_email"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:enableOnBackInvokedCallback="true"
+        android:theme="@style/Theme.Chitti"
         android:supportsRtl="true">
         <activity
             android:name=".MainActivity"

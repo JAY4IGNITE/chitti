@@ -65,3 +65,11 @@ Thumbs.db
 .claude/
 brain/
 skills-lock.json
+
+# Node/NPM files
+node_modules/
+package.json
+package-lock.json
+
+# MCP files
+.mcp.json

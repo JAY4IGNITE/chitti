@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Launcher icon background: the product accent. -->
+    <color name="ic_launcher_background">#5B7CFA</color>
+    <color name="chitti_ink">#07080B</color>
+    <color name="chitti_surface">#0E1116</color>
+</resources>
